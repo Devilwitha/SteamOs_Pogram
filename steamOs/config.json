@@ -1,5 +1,5 @@
 {
-  "pico_ip": "",
+  "pico_ip": "192.168.178.85",
   "tcp_port": 5005,
   "udp_port": 5006,
   "interval_seconds": 3

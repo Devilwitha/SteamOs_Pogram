@@ -12,6 +12,9 @@ im Netzwerk ueberwacht - auch waehrend Steam im **Game Mode** laeuft.
   automatisch im lokalen Netzwerk gesucht (`DISCOVER_PICO`).
 - Danach wird per TCP `PING` an den Pico geschickt; antwortet er mit
   `erreichbar`, wird das geloggt und in `state.json` festgehalten.
+- Ist der Pico erreichbar, wird zusaetzlich per `TAG?` nachgefragt, ob am
+  RC522 ein Tag mit einer neuen Spiel-UID aufliegt (siehe
+  [Automatischer Spielstart](#automatischer-spielstart-per-rfid-tag) unten).
 - Antwortet der Pico nicht mehr, wird die gespeicherte IP verworfen und beim
   naechsten Durchlauf erneut gesucht.
 
@@ -19,9 +22,9 @@ Alle Ausgaben landen im systemd-Journal (`journalctl`), der aktuelle Status
 zusaetzlich in `state.json` neben dem Skript, falls andere Programme ihn
 auslesen wollen.
 
-Die eigentliche Netzwerklogik (Discovery, Ping, Spielauswahl senden) liegt
-in `pico_link.py` und wird sowohl von `pico_client.py` als auch von der
-GUI (`gui/gui_server.py`) verwendet.
+Die eigentliche Netzwerklogik (Discovery, Ping, Spielauswahl senden,
+Tag-Status abfragen) liegt in `pico_link.py` und wird sowohl von
+`pico_client.py` als auch von der GUI (`gui/gui_server.py`) verwendet.
 
 ## Warum es auch im Game Mode laeuft
 
@@ -97,15 +100,19 @@ gekapselte Weboberflaeche zur Auswahl eines Spiels aus `games.db`:
 python3 steamOs/gui/gui_server.py
 ```
 
-Startet einen lokalen Webserver (`http://localhost:8080`) und oeffnet ihn
-automatisch im Standardbrowser (Desktop-Modus). Angezeigt werden alle
+Startet einen lokalen Webserver (`http://localhost:8080`) und versucht,
+ihn automatisch im Standardbrowser zu oeffnen (Desktop-Modus) - klappt das
+nicht (z. B. kein Standardbrowser registriert), einfach die Adresse von
+Hand im Browser aufrufen. Das HTML liegt in [`gui/index.html`](gui/index.html)
+(nicht im Python-Code eingebettet); `gui_server.py` fuellt darin nur die
+Platzhalter `__MESSAGE__`/`__ROWS__`/`__TAG_ROWS__`. Angezeigt werden alle
 Spiele aus der Datenbank mit Name, Installationsstatus und UID. Klick auf
 **"An Pico senden"**:
 
 1. sucht den Pico im Netzwerk (oder nutzt die konfigurierte `pico_ip`),
 2. sendet `SELECT:<uid>` an den Pico (Port `tcp_port`, Standard 5005),
-3. der Pico schreibt die UID in `Pico/selected_game.txt` und antwortet mit
-   `OK:<uid>`,
+3. der Pico merkt die UID zum Verknuepfen mit dem naechsten aufgelegten Tag
+   vor (in `Pico/selected_game.txt` protokolliert) und antwortet mit `OK:<uid>`,
 4. die GUI zeigt die vom Pico bestaetigte UID als Erfolgsmeldung an (bzw.
    eine Fehlermeldung, falls keine oder eine abweichende Bestaetigung kam).
 
@@ -113,6 +120,38 @@ Es wird bewusst eine reine Weboberflaeche auf Basis der Python-
 Standardbibliothek verwendet (kein Tkinter/Qt), da auf SteamOS keine
 zusaetzlichen System-Pakete installiert werden muessen (schreibgeschuetztes
 Root-Dateisystem) - Firefox ist im Desktop-Modus bereits vorinstalliert.
+
+Nach dem `SELECT`-Schritt muss noch ein Tag an den RC522 gehalten werden -
+erst dann verknuepft der Pico ihn tatsaechlich mit der UID (siehe
+[Pico/README.md](../Pico/README.md)).
+
+### Bekannte Tags verwalten (beide Richtungen)
+
+Unterhalb der Spieleliste zeigt die GUI eine zweite Tabelle "Bekannte
+RFID-Tags" - abgerufen per `TAGS?` vom Pico. Jeder Tag, der jemals an den
+RC522 gehalten wurde, taucht hier automatisch auf, auch ohne vorher ein
+Spiel ausgewaehlt zu haben. Von hier aus laesst sich ein Tag direkt (ohne
+erneutes Auflegen) per `LINK:<uid>:<spiel-uid>` mit einem Spiel
+verknuepfen oder wieder trennen - die zweite Richtung neben "Spiel
+waehlen, dann Tag scannen".
+
+## Automatischer Spielstart per RFID-Tag
+
+Sobald `pico_client.py` laeuft (siehe oben), passiert bei jedem 3-Sekunden-
+Takt zusaetzlich Folgendes:
+
+1. Es wird per `TAG?` beim Pico nachgefragt, ob eine neue/unbestaetigte
+   Spiel-UID auf einem aufliegenden Tag erkannt wurde.
+2. Ist eine UID gemeldet, wird sie in `games.db` nachgeschlagen.
+   - Unbekannte UID -> es wird nur eine Warnung geloggt, nichts gestartet.
+   - Bekannte UID, aber Spiel nicht installiert -> Warnung, nichts gestartet.
+   - Bekannte, installierte UID -> das Spiel wird per `launch_command`
+     (`steam -applaunch <appid>`) gestartet.
+3. War der Start erfolgreich, wird dem Pico per `STARTED:<uid>` bestaetigt,
+   dass das Spiel laeuft. Der Pico meldet diese UID danach nicht mehr, bis
+   ein anderer Tag aufgelegt oder der Tag entfernt (und neu aufgelegt) wird -
+   ein bereits gestartetes Spiel wird also nicht bei jedem Poll erneut
+   gestartet, solange derselbe Tag liegen bleibt.
 
 ## Konfiguration (`config.json`)
 

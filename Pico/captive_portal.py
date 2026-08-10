@@ -1,35 +1,28 @@
 """Einfacher Webserver auf Port 80, der eine WLAN-Einrichtungsseite anzeigt
 und eingegebene Zugangsdaten speichert (laeuft im Access-Point-Modus)."""
 import socket
-from wifi_manager import save_credentials
+from wlan import speichern as save_credentials
 
-PAGE = """<!DOCTYPE html>
-<html lang="de">
-<head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Pico WLAN Einrichtung</title>
-<style>
-body{{font-family:sans-serif;background:#1b1f24;color:#eee;display:flex;justify-content:center;padding-top:40px;margin:0}}
-form{{background:#262b33;padding:24px;border-radius:8px;width:280px}}
-input{{width:100%;padding:8px;margin:8px 0;border-radius:4px;border:none;box-sizing:border-box}}
-button{{width:100%;padding:10px;background:#1a9fff;color:#fff;border:none;border-radius:4px;font-weight:bold}}
-h2{{text-align:center;margin-top:0}}
-p{{font-size:0.85em;color:#aaa}}
-</style>
-</head>
-<body>
-<form method="POST" action="/save">
-<h2>WLAN einrichten</h2>
-{message}
-<input type="text" name="ssid" placeholder="WLAN Name (SSID)" required>
-<input type="password" name="password" placeholder="WLAN Passwort" required>
-<button type="submit">Speichern &amp; Verbinden</button>
-<p>Der Pico startet nach dem Speichern neu und versucht sich zu verbinden.</p>
-</form>
-</body>
-</html>
-"""
+with open("setup.html") as _f:
+    PAGE = _f.read()
+
+
+def _render(message_html):
+    return PAGE.replace("__MESSAGE__", message_html)
+
+
+def _send_html(cl, html):
+    body_bytes = html.encode()
+    header = "HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\nContent-Length: {}\r\nConnection: close\r\n\r\n".format(
+        len(body_bytes)
+    )
+    data = header.encode() + body_bytes
+    sent = 0
+    while sent < len(data):
+        n = cl.send(data[sent:])
+        if not n:
+            break
+        sent += n
 
 
 def _url_decode(s):
@@ -68,10 +61,14 @@ def run(on_credentials_saved):
     while True:
         cl, cl_addr = s.accept()
         try:
+            # Bis zum Ende der Header (\r\n\r\n) lesen und damit verwerfen -
+            # bleiben ungelesene Bytes im Socket-Puffer, wenn cl.close()
+            # aufgerufen wird, kann der TCP-Stack ein RST statt eines
+            # sauberen FIN senden und der Browser verwirft die Antwort.
             request = b""
             cl.settimeout(3)
             try:
-                while b"\r\n\r\n" not in request:
+                while b"\r\n\r\n" not in request and len(request) < 4096:
                     chunk = cl.recv(1024)
                     if not chunk:
                         break
@@ -98,19 +95,16 @@ def run(on_credentials_saved):
 
                 if ssid and password:
                     save_credentials(ssid, password)
-                    response_html = PAGE.format(
-                        message="<p style='color:#4caf50'>Gespeichert! Neustart...</p>"
-                    )
-                    cl.send("HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\n\r\n" + response_html)
+                    _send_html(cl, _render("<p style='color:#4caf50'>Gespeichert! Neustart...</p>"))
                     cl.close()
                     on_credentials_saved()
                     continue
                 else:
-                    response_html = PAGE.format(message="<p style='color:#f44336'>Bitte alle Felder ausfuellen.</p>")
+                    response_html = _render("<p style='color:#f44336'>Bitte alle Felder ausfuellen.</p>")
             else:
-                response_html = PAGE.format(message="")
+                response_html = _render("")
 
-            cl.send("HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\n\r\n" + response_html)
+            _send_html(cl, response_html)
         except Exception as e:
             print("Fehler im Webserver:", e)
         finally:

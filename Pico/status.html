@@ -1,0 +1,82 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Pico Status</title>
+<style>
+:root{color-scheme:dark}
+*{box-sizing:border-box}
+body{font-family:-apple-system,Segoe UI,Roboto,sans-serif;background:#101418;color:#e6e9ec;margin:0;padding:24px;display:flex;justify-content:center}
+main{width:100%;max-width:640px}
+h1{font-size:1.4rem;font-weight:600;margin:0 0 20px;display:flex;align-items:center;gap:10px}
+.dot{width:10px;height:10px;border-radius:50%;background:#4ade80;display:inline-block}
+.card{background:#1a1f26;border:1px solid #262c35;border-radius:12px;padding:20px;margin-bottom:16px}
+.card h2{margin:0 0 12px;font-size:0.8rem;text-transform:uppercase;letter-spacing:0.06em;color:#8993a1}
+.row{display:flex;justify-content:space-between;padding:7px 0;border-bottom:1px solid #20252c;font-size:0.95rem}
+.row:last-child{border-bottom:none}
+.row span:first-child{color:#8993a1}
+table{width:100%;border-collapse:collapse;font-size:0.88rem}
+th,td{text-align:left;padding:8px 6px;border-bottom:1px solid #20252c}
+th{color:#8993a1;font-weight:500;font-size:0.75rem;text-transform:uppercase}
+tr:last-child td{border-bottom:none}
+.uid{font-family:ui-monospace,Consolas,monospace;color:#9db4d0}
+.empty{color:#5b6472;font-style:italic}
+.linked{color:#4ade80}
+.unlinked{color:#fbbf24}
+footer{text-align:center;color:#4b5563;font-size:0.78rem;margin-top:8px}
+</style>
+</head>
+<body>
+<main>
+<h1><span class="dot"></span>Pico &middot; Geraetestatus</h1>
+<div class="card">
+<h2>Verbindung</h2>
+<div class="row"><span>Hostname</span><span id="hostname">-</span></div>
+<div class="row"><span>IP-Adresse</span><span id="ip">-</span></div>
+<div class="row"><span>Modus</span><span id="modus">-</span></div>
+</div>
+<div class="card">
+<h2>Aktueller Tag</h2>
+<div class="row"><span>UID</span><span id="tag-uid" class="uid">kein Tag aufgelegt</span></div>
+<div class="row"><span>Spiel-UID</span><span id="tag-game" class="uid">-</span></div>
+</div>
+<div class="card">
+<h2>Bekannte Tags</h2>
+<table>
+<thead><tr><th>UID</th><th>Spiel-UID</th></tr></thead>
+<tbody id="tags-body"><tr><td colspan="2" class="empty">Lade...</td></tr></tbody>
+</table>
+</div>
+<footer>Aktualisiert automatisch alle 2 Sekunden</footer>
+</main>
+<script>
+async function aktualisieren() {
+  try {
+    const res = await fetch('/status.json', {cache: 'no-store'});
+    const daten = await res.json();
+    document.getElementById('hostname').textContent = daten.hostname || '-';
+    document.getElementById('ip').textContent = daten.ip || '-';
+    document.getElementById('modus').textContent = daten.modus;
+
+    const tag = daten.aktueller_tag;
+    document.getElementById('tag-uid').textContent = tag ? tag.uid : 'kein Tag aufgelegt';
+    document.getElementById('tag-game').textContent = (tag && tag.game_uid) ? tag.game_uid : '-';
+
+    const body = document.getElementById('tags-body');
+    if (!daten.tags.length) {
+      body.innerHTML = '<tr><td colspan="2" class="empty">Noch keine Tags erkannt</td></tr>';
+    } else {
+      body.innerHTML = daten.tags.map(t => {
+        const cls = t.game_uid ? 'linked' : 'unlinked';
+        const spiel = t.game_uid ? t.game_uid : 'nicht verknuepft';
+        return `<tr><td class="uid">${t.uid}</td><td class="uid ${cls}">${spiel}</td></tr>`;
+      }).join('');
+    }
+  } catch (e) {}
+}
+aktualisieren();
+setInterval(aktualisieren, 2000);
+</script>
+</body>
+</html>

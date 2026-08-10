@@ -1,0 +1,26 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Pico WLAN Einrichtung</title>
+<style>
+body{font-family:sans-serif;background:#1b1f24;color:#eee;display:flex;justify-content:center;padding-top:40px;margin:0}
+form{background:#262b33;padding:24px;border-radius:8px;width:280px}
+input{width:100%;padding:8px;margin:8px 0;border-radius:4px;border:none;box-sizing:border-box}
+button{width:100%;padding:10px;background:#1a9fff;color:#fff;border:none;border-radius:4px;font-weight:bold}
+h2{text-align:center;margin-top:0}
+p{font-size:0.85em;color:#aaa}
+</style>
+</head>
+<body>
+<form method="POST" action="/save">
+<h2>WLAN einrichten</h2>
+__MESSAGE__
+<input type="text" name="ssid" placeholder="WLAN Name (SSID)" required>
+<input type="password" name="password" placeholder="WLAN Passwort" required>
+<button type="submit">Speichern &amp; Verbinden</button>
+<p>Der Pico startet nach dem Speichern neu und versucht sich zu verbinden.</p>
+</form>
+</body>
+</html>

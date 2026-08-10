@@ -9,6 +9,10 @@ Protokoll ueber TCP (Standard-Port 5005), zeilenbasiert:
     ----------------- -----------------
     PING              erreichbar
     SELECT:<uid>      OK:<uid>
+    TAG?              TAG:<uid>  oder  TAG:NONE
+    STARTED:<uid>     OK:STARTED:<uid>  oder  ERROR:mismatch
+    TAGS?             TAGS:<json-liste aller bekannten Tags>
+    LINK:<uid>:<uid2> OK:LINK:<uid>  oder  ERROR:unknown_tag
 
 Discovery ueber UDP (Standard-Port 5006):
     Anfrage           Antwort
@@ -61,7 +65,7 @@ def discover_pico(udp_port, timeout=2.0):
     return None
 
 
-def _send_command(ip, tcp_port, command, timeout=2.0):
+def _send_command(ip, tcp_port, command, timeout=2.0, max_len=256):
     """Sendet eine Zeile an den Pico, liest eine Zeile Antwort zurueck.
     Gibt die getrimmte Antwort zurueck, oder None bei Verbindungsfehler."""
     try:
@@ -69,8 +73,8 @@ def _send_command(ip, tcp_port, command, timeout=2.0):
             s.sendall((command.strip() + "\n").encode())
             s.settimeout(timeout)
             data = b""
-            while not data.endswith(b"\n") and len(data) < 256:
-                chunk = s.recv(64)
+            while not data.endswith(b"\n") and len(data) < max_len:
+                chunk = s.recv(4096)
                 if not chunk:
                     break
                 data += chunk
@@ -92,3 +96,40 @@ def select_game(ip, tcp_port, uid, timeout=3.0):
         confirmed_uid = response[len("OK:"):]
         return confirmed_uid == uid, confirmed_uid
     return False, response
+
+
+def check_tag(ip, tcp_port, timeout=2.0):
+    """Fragt den Pico, ob ein Tag mit einer neuen/unbestaetigten Spiel-UID
+    aufliegt. Gibt die UID zurueck, oder None."""
+    response = _send_command(ip, tcp_port, "TAG?", timeout)
+    if response and response.startswith("TAG:") and response != "TAG:NONE":
+        return response[len("TAG:"):]
+    return None
+
+
+def confirm_started(ip, tcp_port, uid, timeout=2.0):
+    """Bestaetigt dem Pico, dass das Spiel mit dieser UID gestartet wurde,
+    damit er aufhoert, sie erneut zu melden."""
+    response = _send_command(ip, tcp_port, f"STARTED:{uid}", timeout)
+    return response == f"OK:STARTED:{uid}"
+
+
+def fetch_tags(ip, tcp_port, timeout=3.0):
+    """Fragt die dem Pico bekannte Liste erkannter RFID-Tags ab. Gibt eine
+    Liste von {'uid': ..., 'game_uid': ...-oder-None} zurueck, oder None
+    bei Verbindungsfehler bzw. ungueltiger Antwort."""
+    response = _send_command(ip, tcp_port, "TAGS?", timeout, max_len=65536)
+    if response and response.startswith("TAGS:"):
+        try:
+            return json.loads(response[len("TAGS:"):])
+        except ValueError:
+            return None
+    return None
+
+
+def link_tag(ip, tcp_port, uid_hex, game_uid, timeout=3.0):
+    """Verknuepft (game_uid gesetzt) oder loest (game_uid leer) einen dem
+    Pico bereits bekannten Tag mit einem Spiel - ohne dass der Tag dafuer
+    erneut an den Leser gehalten werden muss."""
+    response = _send_command(ip, tcp_port, f"LINK:{uid_hex}:{game_uid or ''}", timeout)
+    return response == f"OK:LINK:{uid_hex}"
