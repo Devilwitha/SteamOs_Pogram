@@ -1,0 +1,14 @@
+[Unit]
+Description=SteamOS <-> Pico Verbindungsueberwachung
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/python3 %h/steamOs/pico_client.py
+WorkingDirectory=%h/steamOs
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=default.target

@@ -1,0 +1,6 @@
+{
+  "pico_ip": "",
+  "tcp_port": 5005,
+  "udp_port": 5006,
+  "interval_seconds": 3
+}
