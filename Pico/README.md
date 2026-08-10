@@ -13,8 +13,10 @@ MicroPython-Programm fuer einen **Raspberry Pi Pico W** (WLAN-Chip wird benoetig
    Heim-WLANs eingeben und speichern. Der Pico startet danach automatisch neu
    und versucht sich erneut zu verbinden.
 3. Ist die Verbindung erfolgreich, startet der Pico zwei Server:
-   - **TCP-Server (Port 5005):** Antwortet auf jede Anfrage mit `erreichbar`.
-     Das SteamOS-Programm nutzt das fuer den periodischen "Ping".
+   - **TCP-Steuer-Server (Port 5005):** Zeilenbasiertes Protokoll:
+     - `PING` -> Antwort `erreichbar` (fuer den periodischen Erreichbarkeits-Check von SteamOS)
+     - `SELECT:<uid>` -> speichert `<uid>` in `selected_game.txt` und antwortet mit `OK:<uid>`
+       (wird von der [SteamOS-GUI](../steamOs/gui) zum Uebertragen des ausgewaehlten Spiels genutzt)
    - **UDP-Discovery-Server (Port 5006):** Antwortet auf `DISCOVER_PICO` mit
      `PICO:<eigene-ip>`, damit SteamOS den Pico automatisch im Netzwerk finden
      kann, ohne die IP von Hand eintragen zu muessen.
@@ -26,8 +28,9 @@ MicroPython-Programm fuer einen **Raspberry Pi Pico W** (WLAN-Chip wird benoetig
 | `main.py` | Einstiegspunkt, wird beim Booten automatisch ausgefuehrt |
 | `wifi_manager.py` | Verbindungsaufbau + Speichern der WLAN-Zugangsdaten |
 | `captive_portal.py` | Webseite zur WLAN-Einrichtung im Access-Point-Modus |
-| `ping_server.py` | TCP-"erreichbar"-Server + UDP-Discovery-Server |
+| `ping_server.py` | TCP-Steuer-Server (`PING`/`SELECT`) + UDP-Discovery-Server |
 | `wifi_config.json` | Wird automatisch erzeugt, sobald WLAN-Daten gespeichert wurden |
+| `selected_game.txt` | Wird automatisch erzeugt/ueberschrieben, sobald SteamOS ein Spiel per `SELECT:<uid>` sendet |
 
 ## Installation auf dem Pico
 

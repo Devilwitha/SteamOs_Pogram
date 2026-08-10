@@ -1,0 +1,94 @@
+"""Gemeinsame Kommunikationslogik mit dem Pico.
+
+Wird sowohl vom Hintergrund-Monitor (pico_client.py, Erreichbarkeits-Check
+alle paar Sekunden) als auch von der GUI (gui/gui_server.py, Spielauswahl
+senden) verwendet.
+
+Protokoll ueber TCP (Standard-Port 5005), zeilenbasiert:
+    Anfrage           Antwort
+    ----------------- -----------------
+    PING              erreichbar
+    SELECT:<uid>      OK:<uid>
+
+Discovery ueber UDP (Standard-Port 5006):
+    Anfrage           Antwort
+    ----------------- -----------------
+    DISCOVER_PICO     PICO:<ip-des-pico>
+"""
+import json
+import socket
+import sys
+import time
+from pathlib import Path
+
+SCRIPT_DIR = Path(__file__).resolve().parent
+CONFIG_PATH = SCRIPT_DIR / "config.json"
+STATE_PATH = SCRIPT_DIR / "state.json"
+
+DISCOVERY_MESSAGE = b"DISCOVER_PICO"
+
+
+def load_config():
+    with open(CONFIG_PATH) as f:
+        return json.load(f)
+
+
+def write_state(status, ip):
+    state = {
+        "status": status,
+        "pico_ip": ip,
+        "last_update": time.strftime("%Y-%m-%dT%H:%M:%S"),
+    }
+    try:
+        with open(STATE_PATH, "w") as f:
+            json.dump(state, f)
+    except OSError as e:
+        print(f"Konnte Statusdatei nicht schreiben: {e}", file=sys.stderr)
+
+
+def discover_pico(udp_port, timeout=2.0):
+    with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
+        s.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
+        s.settimeout(timeout)
+        s.sendto(DISCOVERY_MESSAGE, ("255.255.255.255", udp_port))
+        try:
+            data, addr = s.recvfrom(64)
+            text = data.decode(errors="ignore")
+            if text.startswith("PICO:"):
+                return text.split(":", 1)[1]
+        except socket.timeout:
+            return None
+    return None
+
+
+def _send_command(ip, tcp_port, command, timeout=2.0):
+    """Sendet eine Zeile an den Pico, liest eine Zeile Antwort zurueck.
+    Gibt die getrimmte Antwort zurueck, oder None bei Verbindungsfehler."""
+    try:
+        with socket.create_connection((ip, tcp_port), timeout=timeout) as s:
+            s.sendall((command.strip() + "\n").encode())
+            s.settimeout(timeout)
+            data = b""
+            while not data.endswith(b"\n") and len(data) < 256:
+                chunk = s.recv(64)
+                if not chunk:
+                    break
+                data += chunk
+            return data.decode(errors="ignore").strip()
+    except OSError:
+        return None
+
+
+def ping_pico(ip, tcp_port, timeout=2.0):
+    return _send_command(ip, tcp_port, "PING", timeout) == "erreichbar"
+
+
+def select_game(ip, tcp_port, uid, timeout=3.0):
+    """Sendet die UID des ausgewaehlten Spiels an den Pico.
+    Gibt (True, bestaetigte_uid) zurueck, wenn der Pico exakt diese UID
+    bestaetigt hat, sonst (False, Antwort-oder-None)."""
+    response = _send_command(ip, tcp_port, f"SELECT:{uid}", timeout)
+    if response and response.startswith("OK:"):
+        confirmed_uid = response[len("OK:"):]
+        return confirmed_uid == uid, confirmed_uid
+    return False, response

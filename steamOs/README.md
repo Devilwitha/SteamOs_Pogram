@@ -10,7 +10,7 @@ im Netzwerk ueberwacht - auch waehrend Steam im **Game Mode** laeuft.
 
 - Ist die IP des Pico noch nicht bekannt, wird sie per UDP-Broadcast
   automatisch im lokalen Netzwerk gesucht (`DISCOVER_PICO`).
-- Danach wird per TCP `ping` an den Pico geschickt; antwortet er mit
+- Danach wird per TCP `PING` an den Pico geschickt; antwortet er mit
   `erreichbar`, wird das geloggt und in `state.json` festgehalten.
 - Antwortet der Pico nicht mehr, wird die gespeicherte IP verworfen und beim
   naechsten Durchlauf erneut gesucht.
@@ -18,6 +18,10 @@ im Netzwerk ueberwacht - auch waehrend Steam im **Game Mode** laeuft.
 Alle Ausgaben landen im systemd-Journal (`journalctl`), der aktuelle Status
 zusaetzlich in `state.json` neben dem Skript, falls andere Programme ihn
 auslesen wollen.
+
+Die eigentliche Netzwerklogik (Discovery, Ping, Spielauswahl senden) liegt
+in `pico_link.py` und wird sowohl von `pico_client.py` als auch von der
+GUI (`gui/gui_server.py`) verwendet.
 
 ## Warum es auch im Game Mode laeuft
 
@@ -52,6 +56,63 @@ Deinstallieren:
 ```bash
 ./uninstall.sh
 ```
+
+## Spiele-Datenbank (`game_scanner.py`)
+
+`game_scanner.py` liest die installierten Steam-Spiele des Benutzers aus
+und schreibt sie in eine lokale SQLite-Datenbank `games.db` (neben dem
+Skript). Dazu werden die Steam-eigenen `libraryfolders.vdf`- und
+`appmanifest_*.acf`-Dateien geparst (kein Steam-Account/API-Key noetig,
+kein Internetzugriff erforderlich).
+
+Tabelle `games`:
+
+| Spalte | Beschreibung |
+|---|---|
+| `uid` | Stabile, aus der AppID abgeleitete UUID (bleibt bei erneuten Scans gleich) |
+| `appid` | Original-AppID von Steam |
+| `name` | Spieltitel |
+| `installed` | `1`, falls der Installationsordner tatsaechlich vorhanden ist, sonst `0` |
+| `install_path` | Pfad zum installierten Spiel, nur gesetzt wenn `installed = 1` |
+| `launch_command` | `steam -applaunch <appid>`, nur gesetzt wenn `installed = 1` (startet das Spiel inkl. Proton-Kompatibilitaetsschicht ueber den Steam-Client) |
+| `last_scanned` | Zeitpunkt des letzten Scans |
+
+Manuell ausfuehren:
+
+```bash
+python3 steamOs/game_scanner.py
+```
+
+`./install.sh` richtet zusaetzlich einen systemd-Timer
+(`steamos-game-scanner.timer`) ein, der die Bibliothek beim Booten und
+danach alle 30 Minuten neu scannt, damit neu installierte oder entfernte
+Spiele automatisch erfasst werden.
+
+## Spielauswahl-GUI (`gui/`)
+
+[`gui/gui_server.py`](gui/gui_server.py) ist eine eigene, in `gui/`
+gekapselte Weboberflaeche zur Auswahl eines Spiels aus `games.db`:
+
+```bash
+python3 steamOs/gui/gui_server.py
+```
+
+Startet einen lokalen Webserver (`http://localhost:8080`) und oeffnet ihn
+automatisch im Standardbrowser (Desktop-Modus). Angezeigt werden alle
+Spiele aus der Datenbank mit Name, Installationsstatus und UID. Klick auf
+**"An Pico senden"**:
+
+1. sucht den Pico im Netzwerk (oder nutzt die konfigurierte `pico_ip`),
+2. sendet `SELECT:<uid>` an den Pico (Port `tcp_port`, Standard 5005),
+3. der Pico schreibt die UID in `Pico/selected_game.txt` und antwortet mit
+   `OK:<uid>`,
+4. die GUI zeigt die vom Pico bestaetigte UID als Erfolgsmeldung an (bzw.
+   eine Fehlermeldung, falls keine oder eine abweichende Bestaetigung kam).
+
+Es wird bewusst eine reine Weboberflaeche auf Basis der Python-
+Standardbibliothek verwendet (kein Tkinter/Qt), da auf SteamOS keine
+zusaetzlichen System-Pakete installiert werden muessen (schreibgeschuetztes
+Root-Dateisystem) - Firefox ist im Desktop-Modus bereits vorinstalliert.
 
 ## Konfiguration (`config.json`)
 
