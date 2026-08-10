@@ -17,6 +17,9 @@ Steam Deck im Game Mode laeuft.
   moderne Statuswebseite und steuert einen RC522-RFID-Leser: liest laufend
   aufliegende Tags, speichert jeden neu erkannten Tag und verknuepft ihn -
   in beide Richtungen - mit einer Spiel-UID.
+- **[windows/](windows)** - duenne Windows-Einstiegspunkte fuer denselben
+  `steamOs/`-Code, nur zum lokalen Testen/Entwickeln auf einem
+  Windows-PC ohne Steam Deck oder Pico-Hardware (siehe dortige README).
 
 ## Einrichtungsreihenfolge
 

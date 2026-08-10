@@ -45,6 +45,14 @@ optionalem **16x2-I2C-LCD**.
    - **UDP-Discovery-Server (Port 5006):** Antwortet auf `DISCOVER_PICO` mit
      `PICO:<eigene-ip>`, damit SteamOS den Pico automatisch im Netzwerk finden
      kann, ohne die IP von Hand eintragen zu muessen.
+4. Faellt die WLAN-Verbindung **waehrend des Betriebs** weg (z. B.
+   Router-Neustart, kurzer Aussetzer), erkennt der Hintergrund-Thread das
+   spaetestens nach `WLAN_CHECK_INTERVAL_MS` (Standard 30 s) und startet
+   den Pico automatisch neu - dadurch greift wieder die robuste
+   Boot-Logik aus Schritt 1-2 (mehrere Verbindungsversuche, danach
+   Hotspot-Fallback). Ohne diese Pruefung wuerde ein WLAN-Ausfall nach dem
+   Booten unbemerkt bleiben und der Pico dauerhaft unerreichbar sein, auch
+   wenn das WLAN spaeter wieder verfuegbar waere.
 
 ### Nur ein Hintergrund-Thread (wichtig!)
 

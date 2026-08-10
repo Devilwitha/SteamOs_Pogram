@@ -37,6 +37,8 @@ import socket
 import select
 import time
 import _thread
+import machine
+import network
 import ujson as json
 
 import tag_manager
@@ -47,6 +49,15 @@ HTTP_PORT = 80
 UDP_PORT = 5006
 DISCOVERY_MESSAGE = b"DISCOVER_PICO"
 SELECTED_GAME_FILE = "selected_game.txt"
+
+# Wie oft (ms) im Hintergrund-Thread geprueft wird, ob die WLAN-Verbindung
+# noch steht. Ist sie weg, startet der Pico neu, um ueber die robuste
+# Boot-Logik in wlan.py (mehrere Verbindungsversuche, danach
+# Hotspot-Fallback) automatisch wieder eine Verbindung herzustellen -
+# ohne diese Pruefung wuerde ein waehrend des Betriebs (nicht beim Booten)
+# auftretender WLAN-Ausfall unbemerkt bleiben und der Pico unerreichbar
+# haengen bleiben.
+WLAN_CHECK_INTERVAL_MS = 30_000
 
 
 def _handle_command(command):
@@ -171,15 +182,18 @@ def _serve(my_ip, hostname):
 
 def _background_loop(my_ip):
     """Laeuft im einzigen verfuegbaren Hintergrund-Thread: beantwortet
-    UDP-Discovery-Anfragen und ruft dazwischen regelmaessig
-    tag_manager.poll_once() auf."""
+    UDP-Discovery-Anfragen, ruft dazwischen regelmaessig
+    tag_manager.poll_once() auf und prueft von Zeit zu Zeit, ob die
+    WLAN-Verbindung noch steht (siehe WLAN_CHECK_INTERVAL_MS)."""
     s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     s.bind(("0.0.0.0", UDP_PORT))
     s.settimeout(0.05)
     print("Discovery-Server laeuft auf Port", UDP_PORT)
 
+    sta = network.WLAN(network.STA_IF)
     last_poll = time.ticks_ms()
+    last_wlan_check = time.ticks_ms()
     while True:
         try:
             data, addr = s.recvfrom(64)
@@ -192,6 +206,12 @@ def _background_loop(my_ip):
         if time.ticks_diff(now, last_poll) >= tag_manager.POLL_INTERVAL_MS:
             tag_manager.poll_once()
             last_poll = now
+
+        if time.ticks_diff(now, last_wlan_check) >= WLAN_CHECK_INTERVAL_MS:
+            last_wlan_check = now
+            if not sta.isconnected():
+                print("WLAN-Verbindung verloren - starte neu, um erneut zu verbinden...")
+                machine.reset()
 
 
 def start(my_ip, hostname=""):

@@ -17,12 +17,34 @@ das sich auch die GUI (gui/gui_server.py) teilt.
 import shlex
 import sqlite3
 import subprocess
+import sys
 import time
 from pathlib import Path
 
 import pico_link
 
 GAMES_DB_PATH = Path(__file__).resolve().parent / "games.db"
+
+
+def _resolve_steam_executable():
+    """Unter Windows steckt 'steam' anders als auf SteamOS/Linux i.d.R.
+    nicht im PATH - subprocess.Popen(['steam', ...]) faende die Datei
+    sonst nicht. Ermittelt den vollen Pfad zu steam.exe ueber die
+    Windows-Registry (HKCU\\Software\\Valve\\Steam -> SteamExe). Nur fuer
+    lokale Tests auf Windows relevant, auf SteamOS greift dieser Zweig
+    nicht (sys.platform != 'win32')."""
+    if sys.platform != "win32":
+        return None
+    try:
+        import winreg
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, r"Software\Valve\Steam") as key:
+            path, _ = winreg.QueryValueEx(key, "SteamExe")
+            return path if Path(path).is_file() else None
+    except OSError:
+        return None
+
+
+_STEAM_EXECUTABLE = _resolve_steam_executable()
 
 
 def find_game_by_uid(uid):
@@ -40,8 +62,13 @@ def launch_game(game):
     if not game["installed"] or not game["launch_command"]:
         print(f"Spiel '{game['name']}' ist nicht installiert, kann nicht gestartet werden.", flush=True)
         return False
+
+    args = shlex.split(game["launch_command"])
+    if args and args[0].lower() == "steam" and _STEAM_EXECUTABLE:
+        args[0] = _STEAM_EXECUTABLE
+
     try:
-        subprocess.Popen(shlex.split(game["launch_command"]))
+        subprocess.Popen(args)
         return True
     except OSError as e:
         print(f"Start von '{game['name']}' fehlgeschlagen: {e}", flush=True)
@@ -73,7 +100,11 @@ def main():
     interval = config.get("interval_seconds", 3)
     tcp_port = config.get("tcp_port", 5005)
     udp_port = config.get("udp_port", 5006)
-    pico_ip = config.get("pico_ip") or None
+    # Fest in config.json eingetragene IP bleibt die ganze Laufzeit ueber
+    # massgeblich (siehe unten) - nur ohne konfigurierte IP wird bei
+    # Verbindungsverlust per Broadcast neu gesucht.
+    configured_ip = config.get("pico_ip") or None
+    pico_ip = configured_ip
 
     print("SteamOS <-> Pico Monitor gestartet", flush=True)
 
@@ -92,9 +123,15 @@ def main():
                 pico_link.write_state("erreichbar", pico_ip)
                 handle_tag(pico_ip, tcp_port, timestamp)
             else:
-                print(f"[{timestamp}] Pico NICHT erreichbar, suche erneut...", flush=True)
+                print(f"[{timestamp}] Pico NICHT erreichbar, versuche erneut...", flush=True)
                 pico_link.write_state("nicht_erreichbar", pico_ip)
-                pico_ip = None
+                # Ist die IP fest konfiguriert, wird sie weiter direkt
+                # angepingt (self-healing nach z.B. einem Neustart des
+                # Pico) statt auf die u.U. unzuverlaessige Broadcast-Suche
+                # auszuweichen - nur eine automatisch gefundene IP wird
+                # verworfen und neu gesucht.
+                if not configured_ip:
+                    pico_ip = None
         else:
             print(f"[{time.strftime('%H:%M:%S')}] Pico nicht gefunden", flush=True)
             pico_link.write_state("nicht_gefunden", None)

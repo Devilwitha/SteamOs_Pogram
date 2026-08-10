@@ -8,15 +8,22 @@ im Netzwerk ueberwacht - auch waehrend Steam im **Game Mode** laeuft.
 `pico_client.py` laeuft in einer Endlosschleife und sendet alle
 `interval_seconds` (Standard: 3 Sekunden) eine Anfrage an den Pico:
 
-- Ist die IP des Pico noch nicht bekannt, wird sie per UDP-Broadcast
-  automatisch im lokalen Netzwerk gesucht (`DISCOVER_PICO`).
+- Ist die IP des Pico noch nicht bekannt (`pico_ip` in `config.json` leer),
+  wird sie per UDP-Broadcast automatisch im lokalen Netzwerk gesucht
+  (`DISCOVER_PICO`).
 - Danach wird per TCP `PING` an den Pico geschickt; antwortet er mit
   `erreichbar`, wird das geloggt und in `state.json` festgehalten.
 - Ist der Pico erreichbar, wird zusaetzlich per `TAG?` nachgefragt, ob am
   RC522 ein Tag mit einer neuen Spiel-UID aufliegt (siehe
   [Automatischer Spielstart](#automatischer-spielstart-per-rfid-tag) unten).
-- Antwortet der Pico nicht mehr, wird die gespeicherte IP verworfen und beim
-  naechsten Durchlauf erneut gesucht.
+- **Antwortet der Pico voruebergehend nicht mehr** (WLAN-Aussetzer,
+  Neustart des Pico, ...): Ist `pico_ip` fest in `config.json` eingetragen,
+  wird genau diese IP beim naechsten Durchlauf einfach erneut angepingt -
+  das Programm "haengt" sich also nicht endgueltig aus, sobald der Pico
+  wieder erreichbar ist, verbindet es sich automatisch neu. Nur wenn keine
+  feste `pico_ip` konfiguriert ist, wird stattdessen erneut per
+  UDP-Broadcast gesucht (siehe oben, funktioniert nicht auf jedem Netzwerk
+  zuverlaessig - siehe Hinweis bei `pico_ip` weiter unten).
 
 Alle Ausgaben landen im systemd-Journal (`journalctl`), der aktuelle Status
 zusaetzlich in `state.json` neben dem Skript, falls andere Programme ihn
@@ -90,6 +97,21 @@ python3 steamOs/game_scanner.py
 (`steamos-game-scanner.timer`) ein, der die Bibliothek beim Booten und
 danach alle 30 Minuten neu scannt, damit neu installierte oder entfernte
 Spiele automatisch erfasst werden.
+
+### Windows-Testversion (`game_scanner_windows.py`)
+
+Zum lokalen Testen der GUI/des Pico-Clients auf einem Windows-Rechner
+(ohne SteamOS-Hardware), z. B. waehrend der Entwicklung: sucht die
+Steam-Installation ueber die Windows-Registry
+(`HKCU\Software\Valve\Steam` -> `SteamPath`, faellt sonst auf die
+uebliche `Program Files (x86)\Steam` zurueck) statt der Linux-Pfade.
+Nutzt ansonsten exakt dieselbe Scan-/Datenbanklogik wie `game_scanner.py`
+(keine Code-Duplikation - ueberschreibt nur `find_steam_root`) und
+schreibt in dieselbe `games.db`:
+
+```bash
+python game_scanner_windows.py
+```
 
 ## Spielauswahl-GUI (`gui/`)
 

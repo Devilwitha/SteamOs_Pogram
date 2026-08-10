@@ -42,24 +42,32 @@ class LcdI2c:
         self._write4((code << 4) & 0xF0, rs=True)
 
     def _init_display(self):
-        time.sleep_ms(50)
+        # Grosszuegige Wartezeiten statt der HD44780-Datenblatt-Minimalwerte:
+        # billige PCF8574-Backpack-Klone haben oft einen ungenauen internen
+        # Oszillator, wodurch die Init-Sequenz bei knapper Bemessung nur
+        # gelegentlich zuverlaessig durchlief ("mal geht's, mal nicht").
+        time.sleep_ms(100)
         # Klassische HD44780-Initialisierungssequenz fuer den 4-Bit-Modus
         for _ in range(3):
             self._write4(0x30, rs=False)
-            time.sleep_ms(5)
+            time.sleep_ms(10)
         self._write4(0x20, rs=False)
-        time.sleep_ms(1)
+        time.sleep_ms(10)
 
         self._command(0x28)  # 4-Bit, 2 Zeilen, 5x8 Punkte
-        self._command(0x08)  # Display aus
-        self._command(0x01)  # Clear
         time.sleep_ms(2)
+        self._command(0x08)  # Display aus
+        time.sleep_ms(2)
+        self._command(0x01)  # Clear
+        time.sleep_ms(10)
         self._command(0x06)  # Entry mode: Cursor nach rechts
+        time.sleep_ms(2)
         self._command(0x0C)  # Display an, Cursor/Blinken aus
+        time.sleep_ms(2)
 
     def clear(self):
         self._command(0x01)
-        time.sleep_ms(2)
+        time.sleep_ms(10)
 
     def move_to(self, col, row):
         row_offsets = (0x00, 0x40, 0x14, 0x54)
