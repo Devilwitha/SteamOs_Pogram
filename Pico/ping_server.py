@@ -49,7 +49,12 @@ Zeilenbasiertes Protokoll ueber TCP (Port 5005):
                           Antwort "OK:FORGET"
 
 HTTP (Port 80): "/" liefert die Statusseite (dark/modern), "/status.json"
-den aktuellen Status inkl. Tag-Liste als JSON.
+den aktuellen Status inkl. Tag-Liste als JSON, "/control" die Steuer-Seite
+(Spiele/Tags/Sounds bedienen wie in der SteamOS-GUI, siehe control.html)
+und "/control/settings" (POST) speichert deren Verbindungseinstellungen
+(PC-Adresse/Token, siehe remote_config.py). Die Steuer-Seite selbst spricht
+danach direkt mit steamOs/gui/gui_server.py auf dem PC - der Pico leitet
+dabei keine Daten durch, siehe control.html.
 
 Sind die beiden optionalen Status-LEDs angeschlossen (siehe main.py/README:
 rot/gruen), zeigen sie unabhaengig vom LCD immer den aktuellen Tag-Zustand:
@@ -78,12 +83,18 @@ import ujson as json
 
 import tag_manager
 import status_server
+import net_state
 
 TCP_PORT = 5005
 HTTP_PORT = 80
 UDP_PORT = 5006
 DISCOVERY_MESSAGE = b"DISCOVER_PICO"
 SELECTED_GAME_FILE = "selected_game.txt"
+# Obergrenze fuer HTTP-POST-Bodies (siehe _handle_http_client) - auf dieser
+# Seite gibt es nur das kleine Verbindungs-Einstellungsformular der
+# Steuer-Seite (control.html), keinen Datei-Upload; 4 KB sind dafuer weit
+# genug und halten den Speicherbedarf pro Anfrage klein.
+MAX_HTTP_BODY = 4096
 
 # Wie oft (ms) im Hintergrund-Thread geprueft wird, ob die WLAN-Verbindung
 # noch steht. Ist sie weg, startet der Pico neu, um ueber die robuste
@@ -217,8 +228,16 @@ def _read_line(cl, max_len=256):
     return data.decode().strip()
 
 
-def _handle_tcp_client(cl):
+def _handle_tcp_client(cl, addr=None):
     try:
+        if addr:
+            # Nebenwirkung des sowieso alle paar Sekunden eintreffenden
+            # PING von steamOs/pico_client.py: die Absender-IP ist die der
+            # SteamOS-Seite - wird nur als bequemer Vorschlag fuers
+            # Verbindungs-Einstellungsformular der Steuer-Seite verwendet
+            # (siehe net_state.py), fuer die eigentliche Steuerung zaehlt
+            # die vom Nutzer gespeicherte Adresse in remote_config.py.
+            net_state.note_pc_ip(addr[0])
         cl.settimeout(3)
         command = _read_line(cl)
         if command:
@@ -231,26 +250,49 @@ def _handle_tcp_client(cl):
         cl.close()
 
 
+def _content_length(header_blob):
+    for line in header_blob.split(b"\r\n"):
+        if line.lower().startswith(b"content-length:"):
+            try:
+                return int(line.split(b":", 1)[1].strip())
+            except ValueError:
+                return 0
+    return 0
+
+
 def _handle_http_client(cl, my_ip, hostname):
     try:
         cl.settimeout(3)
-        # Bis zum Ende der Header (\r\n\r\n) lesen und damit verwerfen, nicht
-        # nur bis zur ersten Zeile - echte Browser schicken deutlich mehr
-        # Header (User-Agent, Accept-*, Sec-Fetch-*, ...) als z.B. urllib.
-        # Bleiben ungelesene Daten im Socket-Puffer, wenn cl.close() unten
-        # aufgerufen wird, schickt der TCP-Stack oft ein RST statt eines
-        # sauberen FIN - der Browser verwirft dann die bereits gesendete
-        # Antwort komplett (Symptom: leere/graue Seite trotz "erfolgreichem"
-        # Senden auf Pico-Seite).
+        # Bis zum Ende der Header (\r\n\r\n) lesen, nicht nur bis zur ersten
+        # Zeile - echte Browser schicken deutlich mehr Header (User-Agent,
+        # Accept-*, Sec-Fetch-*, ...) als z.B. urllib. Bleiben ungelesene
+        # Daten im Socket-Puffer, wenn cl.close() unten aufgerufen wird,
+        # schickt der TCP-Stack oft ein RST statt eines sauberen FIN - der
+        # Browser verwirft dann die bereits gesendete Antwort komplett
+        # (Symptom: leere/graue Seite trotz "erfolgreichem" Senden auf
+        # Pico-Seite).
         request = b""
         while b"\r\n\r\n" not in request and len(request) < 4096:
             chunk = cl.recv(512)
             if not chunk:
                 break
             request += chunk
-        request_line = request.split(b"\r\n", 1)[0].decode()
+        header_blob, _sep, body = request.partition(b"\r\n\r\n")
+        request_line = header_blob.split(b"\r\n", 1)[0].decode()
         print("HTTP-Anfrage:", request_line)
-        status_server.handle(cl, request_line, my_ip, hostname)
+
+        # Nur fuer POST (aktuell allein /control/settings) relevant - ein
+        # kleines Formular mit drei Textfeldern, kein Datei-Upload ueber
+        # diesen Weg (siehe MAX_HTTP_BODY). Rest des Bodies nachlesen, falls
+        # er nicht schon komplett im obigen Header-Read enthalten war.
+        content_length = min(_content_length(header_blob), MAX_HTTP_BODY)
+        while len(body) < content_length:
+            chunk = cl.recv(512)
+            if not chunk:
+                break
+            body += chunk
+
+        status_server.handle(cl, request_line, my_ip, hostname, body)
         print("HTTP-Antwort gesendet")
     except Exception as e:
         print("HTTP-Fehler:", e)
@@ -275,8 +317,8 @@ def _serve(my_ip, hostname):
         readable, _w, _e = select.select([tcp, http], [], [], 1.0)
         for s in readable:
             if s is tcp:
-                cl, _addr = tcp.accept()
-                _handle_tcp_client(cl)
+                cl, addr = tcp.accept()
+                _handle_tcp_client(cl, addr)
             else:
                 cl, _addr = http.accept()
                 _handle_http_client(cl, my_ip, hostname)

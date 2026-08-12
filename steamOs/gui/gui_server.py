@@ -28,6 +28,7 @@ Danach im Browser (Desktop-Modus) http://localhost:8080 oeffnen - wird
 normalerweise automatisch geoeffnet.
 """
 import http.server
+import json
 import re
 import socketserver
 import sqlite3
@@ -343,18 +344,133 @@ def render_page(message_html=""):
     return page
 
 
+def _state_payload():
+    """JSON-Schnappschuss von Spielen + Tags fuer entfernte Clients (siehe
+    /api/state) - z. B. die vom Pico selbst gehostete Steuer-Seite
+    (Pico/control.html), die kein HTML von hier einbetten kann und sich den
+    Zustand stattdessen per fetch() selbst zusammenbaut."""
+    games = fetch_games()
+
+    config = pico_link.load_config()
+    tcp_port = config.get("tcp_port", 5005)
+    pico_ip = _resolve_pico_ip(config)
+    tags = pico_link.fetch_tags(pico_ip, tcp_port) if pico_ip else None
+
+    games_json = [
+        {
+            "uid": g["uid"],
+            "name": g["name"],
+            "installed": bool(g["installed"]),
+            "color": g["color"],
+            "has_audio": bool(g["audio_path"]),
+            "audio_name": Path(g["audio_path"]).name if g["audio_path"] else None,
+        }
+        for g in games
+    ]
+    return {
+        "ok": True,
+        "games": games_json,
+        "tags": tags if tags is not None else [],
+        "pico_reachable": tags is not None,
+    }
+
+
+# Endpunkte fuer entfernte Clients (siehe Pico/control.html): gleiche
+# Aktionen wie die Formulare unten, aber JSON statt HTML-Seite als Antwort
+# und Token-pflichtig sobald die Anfrage nicht von localhost kommt (siehe
+# Handler._is_authorized). Rufen bewusst dieselben modul-globalen Funktionen
+# auf wie die HTML-Handler weiter unten, statt Logik zu duplizieren.
+API_ROUTES = {
+    "/api/select_game": "_api_select_game",
+    "/api/link_tag": "_api_link_tag",
+    "/api/unlink_tag": "_api_unlink_tag",
+    "/api/set_game_color": "_api_set_game_color",
+    "/api/set_tag_color": "_api_set_tag_color",
+    "/api/forget_tag": "_api_forget_tag",
+    "/api/set_game_audio": "_api_set_game_audio",
+    "/api/remove_game_audio": "_api_remove_game_audio",
+    "/api/play_game_audio": "_api_play_game_audio",
+    "/api/stop_game_audio": "_api_stop_game_audio",
+}
+
+
 class Handler(http.server.BaseHTTPRequestHandler):
     def log_message(self, format, *args):
         pass
 
+    def _is_authorized(self):
+        """Lokale Anfragen (die bisherige Desktop-GUI) sind immer erlaubt.
+        Alles andere - insbesondere die vom Pico gehostete Steuer-Seite,
+        die aus dem Browser eines dritten Geraets im LAN heraus per fetch()
+        auf diesen Server zugreift - braucht ein passendes Token, sobald
+        eines in config.json hinterlegt ist. Ohne hinterlegtes Token bleibt
+        der Fernzugriff komplett gesperrt (sicherer Default)."""
+        if self.client_address[0] in ("127.0.0.1", "::1"):
+            return True
+        token = (pico_link.load_config().get("remote_control_token") or "").strip()
+        if not token:
+            return False
+        return self.headers.get("X-Control-Token", "") == token
+
+    def do_OPTIONS(self):
+        # CORS-Preflight fuer die Pico-Steuer-Seite (anderer Origin) - hier
+        # bewusst ohne Token-Pruefung, da Browser bei Preflights keine
+        # benutzerdefinierten Header mitschicken; die eigentliche Anfrage
+        # danach wird ganz normal ueber _is_authorized() geprueft.
+        self.send_response(204)
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+        self.send_header("Access-Control-Allow-Headers", "Content-Type, X-Control-Token")
+        self.send_header("Content-Length", "0")
+        self.end_headers()
+
     def do_GET(self):
+        if not self._is_authorized():
+            self._respond_json(401, {"ok": False, "message": "Unauthorized"})
+            return
+        if self.path == "/api/state":
+            self._respond_json(200, _state_payload())
+            return
         if self.path != "/":
             self.send_response(404)
             self.end_headers()
             return
         self._respond(render_page())
 
+    def _read_api_payload(self):
+        """Wie der Body-Parser unten fuer die HTML-Formulare, gibt aber
+        einfache Skalarwerte statt Listen zurueck (parse_qs-Konvention) und
+        versteht zusaetzlich JSON-Bodies, da die Pico-Steuer-Seite ihre
+        Aktionen ueberwiegend als fetch(..., {body: JSON.stringify(...)})
+        schickt; nur der Datei-Upload nutzt weiterhin multipart/form-data
+        (FormData im Browser)."""
+        content_type = self.headers.get("Content-Type", "")
+        length = int(self.headers.get("Content-Length", 0) or 0)
+        raw_body = self.rfile.read(length) if length else b""
+        if content_type.startswith("multipart/form-data"):
+            parsed = _parse_multipart(content_type, raw_body)
+            return {k: v[0] for k, v in parsed.items()}
+        if content_type.startswith("application/json"):
+            if not raw_body:
+                return {}
+            try:
+                return json.loads(raw_body.decode("utf-8"))
+            except ValueError:
+                return {}
+        parsed = urllib.parse.parse_qs(raw_body.decode())
+        return {k: v[0] for k, v in parsed.items()}
+
     def do_POST(self):
+        if not self._is_authorized():
+            self._respond_json(401, {"ok": False, "message": "Unauthorized"})
+            return
+
+        if self.path in API_ROUTES:
+            payload = self._read_api_payload()
+            result = getattr(self, API_ROUTES[self.path])(payload)
+            self._respond_json(200 if result.get("ok") else 400, result)
+            return
+
         routes = {
             "/send": self._handle_send,
             "/link_tag": self._handle_link_tag,
@@ -500,19 +616,154 @@ class Handler(http.server.BaseHTTPRequestHandler):
             return f"<div class='message success'>Tag {_escape(uid)} wurde {aktion}.</div>"
         return f"<div class='message error'>Verknuepfung fuer Tag {_escape(uid)} fehlgeschlagen (unbekannter Tag?).</div>"
 
+    # -- JSON-API fuer entfernte Clients (siehe API_ROUTES oben) -----------
+    def _api_select_game(self, data):
+        uid = data.get("uid", "")
+        if not uid:
+            return {"ok": False, "message": "Keine UID angegeben."}
+
+        config = pico_link.load_config()
+        tcp_port = config.get("tcp_port", 5005)
+        pico_ip = _resolve_pico_ip(config)
+        if not pico_ip:
+            return {"ok": False, "message": "Pico wurde im Netzwerk nicht gefunden."}
+
+        ok, confirmed = pico_link.select_game(pico_ip, tcp_port, uid, name=_lookup_game_name(uid))
+        if ok:
+            return {"ok": True, "message": f"Pico hat die Auswahl bestaetigt: {confirmed}"}
+        return {"ok": False, "message": f"Keine gueltige Bestaetigung vom Pico erhalten ({confirmed})."}
+
+    def _api_link_tag(self, data):
+        uid = data.get("uid", "")
+        game_uid = data.get("game_uid", "")
+        if not uid or not game_uid:
+            return {"ok": False, "message": "Bitte ein Spiel auswaehlen."}
+        return self._api_link(uid, game_uid, "verknuepft", name=_lookup_game_name(game_uid))
+
+    def _api_unlink_tag(self, data):
+        uid = data.get("uid", "")
+        if not uid:
+            return {"ok": False, "message": "Keine Tag-UID angegeben."}
+        return self._api_link(uid, "", "getrennt")
+
+    def _api_link(self, uid, game_uid, aktion, name=None):
+        config = pico_link.load_config()
+        tcp_port = config.get("tcp_port", 5005)
+        pico_ip = _resolve_pico_ip(config)
+        if not pico_ip:
+            return {"ok": False, "message": "Pico wurde im Netzwerk nicht gefunden."}
+        if pico_link.link_tag(pico_ip, tcp_port, uid, game_uid, name=name):
+            return {"ok": True, "message": f"Tag {uid} wurde {aktion}."}
+        return {"ok": False, "message": f"Verknuepfung fuer Tag {uid} fehlgeschlagen (unbekannter Tag?)."}
+
+    def _api_set_game_color(self, data):
+        uid = data.get("uid", "")
+        color = data.get("color", "")
+        if not uid:
+            return {"ok": False, "message": "Keine Spiel-UID angegeben."}
+        set_game_color(uid, color)
+        return {"ok": True, "message": "Farbe fuer Spiel gespeichert."}
+
+    def _api_set_tag_color(self, data):
+        uid = data.get("uid", "")
+        color = data.get("color", "")
+        if not uid:
+            return {"ok": False, "message": "Keine Tag-UID angegeben."}
+
+        config = pico_link.load_config()
+        tcp_port = config.get("tcp_port", 5005)
+        pico_ip = _resolve_pico_ip(config)
+        if not pico_ip:
+            return {"ok": False, "message": "Pico wurde im Netzwerk nicht gefunden."}
+
+        if pico_link.set_tag_color(pico_ip, tcp_port, uid, color):
+            return {"ok": True, "message": f"Farbe fuer Tag {uid} gespeichert."}
+        return {"ok": False, "message": f"Farbe fuer Tag {uid} konnte nicht gespeichert werden (unbekannter Tag?)."}
+
+    def _api_forget_tag(self, data):
+        config = pico_link.load_config()
+        tcp_port = config.get("tcp_port", 5005)
+        pico_ip = _resolve_pico_ip(config)
+        if not pico_ip:
+            return {"ok": False, "message": "Pico wurde im Netzwerk nicht gefunden."}
+
+        if pico_link.forget_next_tag(pico_ip, tcp_port):
+            return {
+                "ok": True,
+                "message": (
+                    "Loeschmodus aktiv: Jetzt den zu loeschenden Tag an den RC522 halten - "
+                    "er wird beim naechsten Erkennen dauerhaft entfernt."
+                ),
+            }
+        return {"ok": False, "message": "Pico hat den Loeschmodus nicht bestaetigt."}
+
+    def _api_set_game_audio(self, data):
+        uid = data.get("uid", "")
+        if not uid:
+            return {"ok": False, "message": "Keine Spiel-UID angegeben."}
+
+        upload = data.get("audio_file")
+        if not upload or not isinstance(upload, dict) or not upload.get("filename"):
+            return {"ok": False, "message": "Keine Datei ausgewaehlt."}
+
+        ok, error = set_game_audio(uid, upload["filename"], upload["content"])
+        if ok:
+            return {"ok": True, "message": f"Sound '{upload['filename']}' gespeichert."}
+        return {"ok": False, "message": error}
+
+    def _api_remove_game_audio(self, data):
+        uid = data.get("uid", "")
+        if not uid:
+            return {"ok": False, "message": "Keine Spiel-UID angegeben."}
+        remove_game_audio(uid)
+        return {"ok": True, "message": "Sound entfernt."}
+
+    def _api_play_game_audio(self, data):
+        uid = data.get("uid", "")
+        path = _lookup_game_audio_path(uid)
+        if not path:
+            return {"ok": False, "message": "Kein Sound fuer dieses Spiel hinterlegt."}
+        audio_player.play(path)
+        return {"ok": True, "message": "Wiedergabe gestartet."}
+
+    def _api_stop_game_audio(self, data):
+        audio_player.stop()
+        return {"ok": True, "message": "Wiedergabe gestoppt."}
+
     def _respond(self, html):
         encoded = html.encode("utf-8")
         self.send_response(200)
         self.send_header("Content-Type", "text/html; charset=utf-8")
         self.send_header("Content-Length", str(len(encoded)))
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.end_headers()
+        self.wfile.write(encoded)
+
+    def _respond_json(self, status, data):
+        encoded = json.dumps(data).encode("utf-8")
+        self.send_response(status)
+        self.send_header("Content-Type", "application/json; charset=utf-8")
+        self.send_header("Content-Length", str(len(encoded)))
+        self.send_header("Access-Control-Allow-Origin", "*")
         self.end_headers()
         self.wfile.write(encoded)
 
 
 def main():
-    with socketserver.TCPServer((HOST, PORT), Handler) as httpd:
-        url = f"http://{HOST}:{PORT}/"
+    # gui_bind erlaubt es, den Server bewusst fuers LAN zu oeffnen (z. B.
+    # "0.0.0.0"), damit die vom Pico gehostete Steuer-Seite (siehe
+    # Pico/control.html) ihn per fetch() erreichen kann - siehe
+    # Handler._is_authorized fuer die dafuer noetige Token-Pruefung.
+    # Standardmaessig bleibt es bei 127.0.0.1, bestehende Installationen
+    # sind also unveraendert nur lokal erreichbar.
+    config = pico_link.load_config()
+    host = config.get("gui_bind") or HOST
+    with socketserver.TCPServer((host, PORT), Handler) as httpd:
+        display_host = "127.0.0.1" if host == "0.0.0.0" else host
+        url = f"http://{display_host}:{PORT}/"
         print(f"GUI laeuft unter {url}")
+        if host == "0.0.0.0":
+            print(f"Im LAN erreichbar unter Port {PORT} (Token-geschuetzt, siehe config.json)")
         try:
             webbrowser.open(url)
         except Exception:

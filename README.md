@@ -55,6 +55,11 @@ LED-Streifen, der das erkannte Spiel/den Tag farblich anzeigt.
    Tags an - `steamOs/led_config.json` funktioniert wie `config.json`.
 7. Statusseite des Pico im Browser: `http://<pico-ip>/` (nur im normalen
    WLAN-Betrieb erreichbar).
+8. **(Optional) Fernsteuerung ueber die Pico-Webseite:** `http://<pico-ip>/control`
+   bietet dieselben Funktionen wie die SteamOS-GUI (Farben, Tags, Sounds)
+   direkt vom Pico aus - siehe [Fernsteuerung ueber die Pico-Webseite](#fernsteuerung-ueber-die-pico-webseite-optional)
+   unten. Setzt voraus, dass `gui_bind`/`remote_control_token` in
+   `steamOs/config.json` gesetzt sind (siehe [steamOs/README.md](steamOs/README.md)).
 
 ## Protokoll zwischen SteamOS und Pico
 
@@ -79,6 +84,29 @@ LED-Streifen, der das erkannte Spiel/den Tag farblich anzeigt.
 | SteamOS -> Pico | TCP 5005 | `CURRENT?` | Fragt den gerade aufliegenden Tag ab (nicht einmalig wie `TAG?`) |
 | Pico -> SteamOS | TCP 5005 | `CURRENT:<json>` / `CURRENT:NONE` | `{"uid":..., "game_uid":..., "game_name":..., "color":..., "status":...}`, oder nichts aufliegend - Grundlage fuer die Led_Pico-Farbe. `status` ist `erkannt`/`gesendet`/`gestartet` (siehe [Pico/README.md](Pico/README.md)) |
 | Browser -> Pico | HTTP 80 | `GET /` bzw. `/status.json` | Statuswebseite / -daten (nur im Normalbetrieb) |
+| Browser -> Pico | HTTP 80 | `GET /control` | Fernsteuerseite (siehe unten) |
+| Browser -> Pico | HTTP 80 | `POST /control/settings` | Speichert deren Verbindungseinstellungen (PC-IP/-Port/Token) lokal auf dem Pico |
+
+## Fernsteuerung ueber die Pico-Webseite (optional)
+
+`http://<pico-ip>/control` spiegelt die gesamte [SteamOS-GUI](steamOs/gui)
+(Spielfarben, Tag-Verknuepfung/-Farbe/-Loeschen, Sound-Upload/-Wiedergabe,
+"An Pico senden") auf einer vom Pico selbst gehosteten Seite. Der Pico
+leitet dabei **nichts** durch: die Seite laedt im Browser des Nutzers und
+spricht von dort per `fetch()` direkt mit `steamOs/gui/gui_server.py` auf
+dem PC (neue `/api/...`-JSON-Routen, Token-geschuetzt). `games.db` auf dem
+PC bleibt dadurch die einzige Datenbank - "Synchronisation" passiert
+dadurch, dass beide Seiten bei jeder Aktion denselben, aktuellen Stand
+direkt aus/in `games.db` lesen bzw. schreiben, statt zwei Kopien
+abzugleichen.
+
+Voraussetzungen (siehe [steamOs/README.md](steamOs/README.md#fernsteuerung-direkt-von-der-pico-webseite-aus-control)
+fuer Details):
+- `steamOs/config.json`: `"gui_bind": "0.0.0.0"` (oeffnet `gui_server.py`
+  fuers LAN, Standard ist nur lokal) und ein gesetztes
+  `"remote_control_token"` (sonst `401` fuer alle Nicht-`127.0.0.1`-Anfragen).
+- Auf `/control` einmalig PC-IP, PC-Port (Standard `8080`) und dasselbe
+  Token eintragen und speichern (siehe [Pico/README.md](Pico/README.md#fernsteuerseite-control)).
 
 ## Protokoll zwischen SteamOS und dem optionalen Led_Pico
 

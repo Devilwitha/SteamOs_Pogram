@@ -185,6 +185,39 @@ uebrigen Formular-basierten Aufbau der GUI) keine Live-Bestaetigung per
 JavaScript, sobald die Loeschung tatsaechlich stattgefunden hat - ein
 Neuladen der Seite zeigt den aktuellen Stand.
 
+## Fernsteuerung direkt von der Pico-Webseite aus (`/control`)
+
+Alles, was die GUI oben kann (Farben, Tag-Verknuepfung/-Farbe/-Loeschen,
+Sound-Upload/-Wiedergabe, "An Pico senden"), laesst sich zusaetzlich direkt
+ueber eine vom **Pico selbst** gehostete Seite bedienen -
+`http://<pico-ip>/control` (siehe [`Pico/control.html`](../Pico/control.html),
+Details zur Pico-seitigen Umsetzung in
+[`Pico/README.md`](../Pico/README.md#fernsteuerseite-control)). Praktisch,
+wenn man am Pico/RFID-Leser steht und nicht extra zum PC gehen will, z. B.
+um schnell einen neuen Sound hochzuladen.
+
+Technisch bleibt `games.db` dabei die einzige Datenbank: der Pico speichert
+selbst nichts dauerhaft, sondern liefert nur die Seite aus. Deren
+JavaScript spricht anschliessend direkt (per `fetch()`, aus dem Browser des
+Geraets, mit dem man die Pico-Seite aufgerufen hat) mit `gui_server.py` auf
+dem PC - inklusive Datei-Uploads (Songs landen dadurch unveraendert direkt
+auf dem PC/in `games.db`, ohne durch den speicherschwachen Pico
+"hindurchzumuessen"). Damit das funktioniert, muss `gui_server.py`:
+
+1. mit `"gui_bind": "0.0.0.0"` in `config.json` bewusst fuers LAN geoeffnet
+   werden (Standard ist weiterhin `"127.0.0.1"`, also nur lokal erreichbar -
+   ohne diese Aenderung bleibt `/control` ohne Wirkung), und
+2. ein `"remote_control_token"` in `config.json` gesetzt haben - siehe
+   [Konfiguration](#konfiguration-configjson) unten. Anfragen von
+   `127.0.0.1` (die normale Desktop-GUI) sind davon unberuehrt, alles
+   andere (also auch `/control`) braucht das Token, sonst `401`.
+
+Einrichtung auf der Pico-Seite (einmalig, im Formular oben auf
+`/control`): PC-IP, PC-Port (Standard `8080`) und dasselbe Token wie in
+`config.json` eintragen und speichern - die IP wird dabei bereits als
+Vorschlag vorausgefuellt, sobald `pico_client.py` mindestens einmal
+gelaufen ist (siehe `Pico/README.md`).
+
 ## Automatischer Spielstart per RFID-Tag
 
 Sobald `pico_client.py` laeuft (siehe oben), passiert bei jedem 3-Sekunden-
@@ -266,7 +299,9 @@ Spielstart funktioniert unabhaengig davon.
   "pico_ip": "",
   "tcp_port": 5005,
   "udp_port": 5006,
-  "interval_seconds": 3
+  "interval_seconds": 3,
+  "gui_bind": "127.0.0.1",
+  "remote_control_token": ""
 }
 ```
 
@@ -276,3 +311,15 @@ Spielstart funktioniert unabhaengig davon.
 - `tcp_port` / `udp_port`: Muessen mit den Ports in `Pico/ping_server.py`
   uebereinstimmen (Standard 5005 / 5006).
 - `interval_seconds`: Wie oft (in Sekunden) angefragt wird.
+- `gui_bind`: Auf welcher Adresse `gui_server.py` lauscht. Standard
+  `"127.0.0.1"` (nur lokal erreichbar, unveraendertes Verhalten). Nur auf
+  `"0.0.0.0"` setzen, wenn die [Fernsteuerung von der Pico-Seite aus](#fernsteuerung-direkt-von-der-pico-webseite-aus-control)
+  genutzt werden soll - **oeffnet dann Schreibzugriff (Spiele starten,
+  Tags loeschen, Sounds ersetzen, ...) fuers gesamte LAN**, siehe
+  `remote_control_token`.
+- `remote_control_token`: Leer = Fernzugriff komplett gesperrt (sicherer
+  Default, auch wenn `gui_bind` auf `"0.0.0.0"` steht). Ein beliebiger,
+  selbst gewaehlter Text aktiviert ihn - jede Anfrage, die nicht von
+  `127.0.0.1` kommt, muss ihn im Header `X-Control-Token` mitschicken,
+  sonst `401`. Dasselbe Token muss auf der Pico-Steuer-Seite (`/control`)
+  hinterlegt werden.

@@ -1,0 +1,355 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Pico Fernsteuerung</title>
+<style>
+:root{
+  color-scheme:dark;
+  --bg:#080b10;
+  --panel:#11151d;
+  --panel2:#161c27;
+  --border:#232c3d;
+  --cyan:#00e5ff;
+  --cyan-dim:#0891a8;
+  --magenta:#ff2e97;
+  --green:#39ff8c;
+  --amber:#ffb238;
+  --red:#ff4d6d;
+  --text:#e8edf5;
+  --dim:#7686a0;
+}
+*{box-sizing:border-box}
+html,body{margin:0;padding:0}
+body{
+  min-height:100vh;
+  font-family:"Segoe UI",Roboto,-apple-system,sans-serif;
+  color:var(--text);
+  background:
+    radial-gradient(circle at 12% -10%,rgba(0,229,255,.12),transparent 40%),
+    radial-gradient(circle at 90% 110%,rgba(255,46,151,.10),transparent 40%),
+    repeating-linear-gradient(rgba(255,255,255,.025) 0 1px,transparent 1px 26px),
+    repeating-linear-gradient(90deg,rgba(255,255,255,.025) 0 1px,transparent 1px 26px),
+    var(--bg);
+  padding:28px 16px 60px;
+}
+.hud-top{
+  max-width:900px;margin:0 auto 22px;
+  text-align:center;
+  font-size:.72rem;font-weight:700;letter-spacing:.3em;text-transform:uppercase;
+  color:var(--cyan-dim);
+  padding-bottom:10px;
+  border-bottom:1px solid var(--border);
+}
+.hud-top span{color:var(--cyan)}
+.wrap{max-width:900px;margin:0 auto}
+h1,h2{font-weight:700;letter-spacing:.06em;text-transform:uppercase;margin:0}
+h1{
+  font-size:1.3rem;color:var(--text);
+  display:flex;align-items:center;gap:10px;
+  padding-left:12px;border-left:4px solid var(--cyan);
+  margin-bottom:18px;
+}
+h2{
+  font-size:.78rem;color:var(--cyan);
+  padding-left:10px;border-left:3px solid var(--magenta);
+  margin:30px 0 12px;
+}
+.panel{
+  background:linear-gradient(160deg,var(--panel2),var(--panel));
+  border:1px solid var(--border);
+  clip-path:polygon(16px 0,100% 0,100% calc(100% - 16px),calc(100% - 16px) 100%,0 100%,0 16px);
+  box-shadow:0 0 0 1px rgba(0,229,255,.04),0 8px 24px rgba(0,0,0,.35);
+  overflow:hidden;
+}
+.card{padding:16px 18px}
+.field-row{display:flex;flex-wrap:wrap;gap:10px;align-items:flex-end;margin-bottom:10px}
+.field{display:flex;flex-direction:column;gap:4px}
+.field label{font-size:.7rem;color:var(--dim);text-transform:uppercase;letter-spacing:.06em}
+input[type=text],input[type=number],input[type=password]{
+  font:inherit;padding:8px 10px;border-radius:4px;border:1px solid var(--border);
+  background:#0c1017;color:var(--text);min-width:150px;
+}
+input:focus,select:focus{outline:none;border-color:var(--cyan);box-shadow:0 0 0 3px rgba(0,229,255,.15)}
+table{width:100%;border-collapse:collapse;font-size:.9rem}
+th,td{padding:10px 12px;text-align:left;vertical-align:middle}
+th{
+  background:rgba(0,229,255,.06);color:var(--cyan);
+  font-size:.68rem;letter-spacing:.08em;text-transform:uppercase;
+  border-bottom:1px solid var(--border);
+}
+td{border-bottom:1px solid var(--border)}
+tr:last-child td{border-bottom:none}
+tbody tr:hover td{background:rgba(0,229,255,.035)}
+.badge{color:var(--dim);font-size:.82em;text-transform:uppercase;letter-spacing:.04em}
+.uid{color:var(--cyan-dim);font-size:.78em;font-family:Consolas,ui-monospace,monospace}
+.linked{color:var(--green);font-weight:600}
+.unlinked{color:var(--amber);font-weight:600}
+.empty{color:var(--dim);font-style:italic}
+button{
+  font:inherit;font-weight:700;font-size:.74rem;letter-spacing:.04em;text-transform:uppercase;
+  padding:8px 14px;cursor:pointer;color:#04141a;border:1px solid var(--cyan);
+  background:linear-gradient(180deg,var(--cyan),var(--cyan-dim));
+  clip-path:polygon(8px 0,100% 0,100% calc(100% - 8px),calc(100% - 8px) 100%,0 100%,0 8px);
+  box-shadow:0 0 12px rgba(0,229,255,.35);
+}
+button:hover{box-shadow:0 0 18px rgba(0,229,255,.55)}
+button.secondary{
+  color:#210014;border-color:var(--magenta);
+  background:linear-gradient(180deg,var(--magenta),#a8125f);
+  box-shadow:0 0 12px rgba(255,46,151,.35);
+}
+button:disabled{opacity:.45;cursor:default;box-shadow:none}
+select{
+  font:inherit;padding:7px 9px;border-radius:4px;border:1px solid var(--border);
+  background:#0c1017;color:var(--text);max-width:160px;
+}
+input[type=color]{
+  width:36px;height:32px;padding:2px;border-radius:4px;cursor:pointer;
+  border:1px solid var(--border);background:#0c1017;
+}
+.inline{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.audio-cell{min-width:180px}
+.audio-current{color:var(--dim);font-size:.76em;margin-bottom:6px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:200px}
+.audio-cell button{padding:5px 9px}
+input[type=file]{font:inherit;font-size:.76rem;color:var(--dim);max-width:160px}
+.message{
+  padding:11px 15px;margin-bottom:16px;font-size:.88rem;font-weight:600;
+  background:rgba(255,255,255,.02);border-left:4px solid;
+}
+.success{border-color:var(--green);color:var(--green)}
+.error{border-color:var(--red);color:var(--red)}
+.hint{color:var(--dim);font-size:.8em;line-height:1.6;margin-top:8px}
+</style>
+</head>
+<body>
+<div class="hud-top"><span>&#9670;</span> Steam &middot; Pico Control System <span>&#9670;</span></div>
+<div class="wrap">
+<h1>Pico &middot; Fernsteuerung</h1>
+<div id="message-area"></div>
+
+<div class="panel card">
+<h2 style="margin-top:0">Verbindung zum PC</h2>
+<form id="settings-form" method="POST" action="/control/settings">
+<div class="field-row">
+<div class="field"><label>PC-IP</label><input type="text" name="pc_ip" id="pc_ip" value="__PC_IP__" placeholder="z.B. 192.168.178.50"></div>
+<div class="field"><label>Port</label><input type="number" name="pc_port" id="pc_port" value="__PC_PORT__" style="min-width:80px"></div>
+<div class="field"><label>Token</label><input type="password" name="token" id="token" value="__TOKEN__" placeholder="siehe config.json"></div>
+<button type="submit">Speichern</button>
+</div>
+</form>
+<p class="hint">Muss einmalig eingerichtet werden: IP und Port von steamOs/gui/gui_server.py auf dem PC
+(Standardport 8080), sowie das dort in config.json unter "remote_control_token" hinterlegte Token.
+Ohne passendes Token lehnt der PC alle Anfragen von hier ab.</p>
+</div>
+
+<div id="control-sections" style="display:none">
+<h2>Spiele</h2>
+<div class="panel">
+<table>
+<thead><tr><th>Name</th><th>Status</th><th>UID</th><th>Farbe</th><th>Sound</th><th></th></tr></thead>
+<tbody id="games-body"><tr><td colspan="6" class="empty">Lade...</td></tr></tbody>
+</table>
+</div>
+
+<h2>Bekannte RFID-Tags</h2>
+<div class="inline" style="margin-bottom:12px">
+<button type="button" class="secondary" id="forget-tag-btn">Tag loeschen...</button>
+</div>
+<div class="panel">
+<table>
+<thead><tr><th>Tag-UID</th><th>Verknuepftes Spiel</th><th>Farbe</th><th colspan="2"></th></tr></thead>
+<tbody id="tags-body"><tr><td colspan="5" class="empty">Lade...</td></tr></tbody>
+</table>
+</div>
+<p class="hint">Diese Seite spricht direkt (per Browser-fetch) mit gui_server.py auf dem PC - der Pico
+selbst leitet dabei keine Daten durch und speichert auch keine eigene Kopie der Spieledaten.
+Aenderungen landen sofort in games.db auf dem PC, genau wie ueber die dortige GUI.</p>
+</div>
+</div>
+
+<script>
+const cfg = { ip: "__PC_IP_JS__", port: "__PC_PORT_JS__", token: "__TOKEN_JS__" };
+let gamesCache = [];
+
+function esc(s) {
+  return (s === null || s === undefined ? "" : String(s))
+    .replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll('"', "&quot;");
+}
+
+function showMessage(text, ok) {
+  const area = document.getElementById("message-area");
+  area.innerHTML = `<div class="message ${ok ? "success" : "error"}">${esc(text)}</div>`;
+}
+
+function apiUrl(path) {
+  return `http://${cfg.ip}:${cfg.port}${path}`;
+}
+
+async function apiFetch(path, opts) {
+  opts = opts || {};
+  const headers = Object.assign({}, opts.headers || {});
+  if (cfg.token) headers["X-Control-Token"] = cfg.token;
+  try {
+    const res = await fetch(apiUrl(path), Object.assign({}, opts, { headers }));
+    return await res.json();
+  } catch (e) {
+    return { ok: false, message: "PC nicht erreichbar - IP/Port/Token pruefen (" + e + ")." };
+  }
+}
+
+function apiPostJson(path, body) {
+  return apiFetch(path, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body || {}),
+  });
+}
+
+async function afterAction(resultPromise) {
+  const result = await resultPromise;
+  showMessage(result.message || (result.ok ? "OK" : "Fehler"), result.ok);
+  if (result.ok) loadState();
+  return result;
+}
+
+function renderGames(games) {
+  gamesCache = games;
+  const body = document.getElementById("games-body");
+  if (!games.length) {
+    body.innerHTML = "<tr><td colspan='6' class='empty'>Keine Spiele gefunden.</td></tr>";
+    return;
+  }
+  body.innerHTML = games.map(g => {
+    const color = g.color || "#00e5ff";
+    const audioHtml = g.has_audio
+      ? `<div class="audio-current">&#127925; ${esc(g.audio_name)}</div>
+         <div class="inline">
+           <button type="button" data-action="play" data-uid="${esc(g.uid)}">&#9658;</button>
+           <button type="button" class="secondary" data-action="stop" data-uid="${esc(g.uid)}">&#9632;</button>
+           <button type="button" class="secondary" data-action="remove-audio" data-uid="${esc(g.uid)}">&#10005;</button>
+         </div>`
+      : `<span class="unlinked">kein Sound</span>`;
+    return `<tr>
+      <td>${esc(g.name)}</td>
+      <td class="badge">${g.installed ? "installiert" : "nicht installiert"}</td>
+      <td class="uid">${esc(g.uid)}</td>
+      <td><input type="color" value="${color}" data-action="color" data-uid="${esc(g.uid)}"></td>
+      <td class="audio-cell">${audioHtml}<input type="file" accept=".mp3,.wav,.ogg,.flac,.m4a" data-action="upload" data-uid="${esc(g.uid)}"></td>
+      <td><button type="button" data-action="select" data-uid="${esc(g.uid)}">An Pico senden</button></td>
+    </tr>`;
+  }).join("");
+}
+
+function renderTags(tags, picoReachable, games) {
+  const body = document.getElementById("tags-body");
+  if (!picoReachable) {
+    body.innerHTML = "<tr><td colspan='5' class='empty'>Pico nicht ueber den PC erreichbar - Tag-Liste kann nicht geladen werden.</td></tr>";
+    return;
+  }
+  if (!tags.length) {
+    body.innerHTML = "<tr><td colspan='5' class='empty'>Noch keine Tags erkannt. Einen Tag an den RC522 halten.</td></tr>";
+    return;
+  }
+  const names = {};
+  games.forEach(g => { names[g.uid] = g.name; });
+  body.innerHTML = tags.map(t => {
+    const color = t.color || "#00e5ff";
+    const options = ["<option value=''>Spiel waehlen ...</option>"]
+      .concat(games.map(g => `<option value="${esc(g.uid)}"${g.uid === t.game_uid ? " selected" : ""}>${esc(g.name)}</option>`));
+    const status = t.game_uid
+      ? `<span class="linked">${esc(names[t.game_uid] || t.game_uid)}</span>`
+      : `<span class="unlinked">nicht verknuepft</span>`;
+    const unlinkBtn = t.game_uid
+      ? `<button type="button" class="secondary" data-action="unlink" data-uid="${esc(t.uid)}">Trennen</button>`
+      : "";
+    return `<tr>
+      <td class="uid">${esc(t.uid)}</td>
+      <td>${status}</td>
+      <td><input type="color" value="${color}" data-action="tag-color" data-uid="${esc(t.uid)}"></td>
+      <td class="inline">
+        <select data-role="game-select" data-uid="${esc(t.uid)}">${options.join("")}</select>
+        <button type="button" data-action="link" data-uid="${esc(t.uid)}">Verknuepfen</button>
+      </td>
+      <td>${unlinkBtn}</td>
+    </tr>`;
+  }).join("");
+}
+
+async function loadState() {
+  const result = await apiFetch("/api/state");
+  if (!result.ok) {
+    showMessage(result.message || "Zustand konnte nicht geladen werden.", false);
+    return;
+  }
+  renderGames(result.games || []);
+  renderTags(result.tags || [], result.pico_reachable, result.games || []);
+}
+
+document.getElementById("games-body").addEventListener("change", ev => {
+  const el = ev.target;
+  if (el.dataset.action === "color") {
+    afterAction(apiPostJson("/api/set_game_color", { uid: el.dataset.uid, color: el.value }));
+  } else if (el.dataset.action === "upload" && el.files[0]) {
+    const fd = new FormData();
+    fd.append("uid", el.dataset.uid);
+    fd.append("audio_file", el.files[0]);
+    afterAction(apiFetch("/api/set_game_audio", { method: "POST", body: fd }));
+  }
+});
+
+document.getElementById("games-body").addEventListener("click", ev => {
+  const el = ev.target.closest("button[data-action]");
+  if (!el) return;
+  const uid = el.dataset.uid;
+  if (el.dataset.action === "play") afterAction(apiPostJson("/api/play_game_audio", { uid }));
+  else if (el.dataset.action === "stop") afterAction(apiPostJson("/api/stop_game_audio", {}));
+  else if (el.dataset.action === "remove-audio") afterAction(apiPostJson("/api/remove_game_audio", { uid }));
+  else if (el.dataset.action === "select") afterAction(apiPostJson("/api/select_game", { uid }));
+});
+
+document.getElementById("tags-body").addEventListener("change", ev => {
+  const el = ev.target;
+  if (el.dataset.action === "tag-color") {
+    afterAction(apiPostJson("/api/set_tag_color", { uid: el.dataset.uid, color: el.value }));
+  }
+});
+
+document.getElementById("tags-body").addEventListener("click", ev => {
+  const el = ev.target.closest("button[data-action]");
+  if (!el) return;
+  const uid = el.dataset.uid;
+  if (el.dataset.action === "unlink") {
+    afterAction(apiPostJson("/api/unlink_tag", { uid }));
+  } else if (el.dataset.action === "link") {
+    const row = el.closest("tr");
+    const select = row.querySelector("select[data-role=game-select]");
+    if (!select.value) { showMessage("Bitte ein Spiel auswaehlen.", false); return; }
+    afterAction(apiPostJson("/api/link_tag", { uid, game_uid: select.value }));
+  }
+});
+
+document.getElementById("forget-tag-btn").addEventListener("click", () => {
+  afterAction(apiPostJson("/api/forget_tag", {}));
+});
+
+if (cfg.ip) {
+  document.getElementById("control-sections").style.display = "";
+  loadState();
+  setInterval(() => {
+    const active = document.activeElement;
+    const insideTable = active && active.closest && (active.closest("#games-body") || active.closest("#tags-body"));
+    if (!insideTable) loadState();
+  }, 10000);
+} else {
+  showMessage("Bitte zuerst Verbindungseinstellungen speichern.", false);
+}
+
+if (new URLSearchParams(location.search).get("saved")) {
+  showMessage("Verbindungseinstellungen gespeichert.", true);
+}
+</script>
+</div>
+</body>
+</html>

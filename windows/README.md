@@ -41,6 +41,52 @@ python windows\gui_server.py
 # Danach im Browser: http://127.0.0.1:8080/
 ```
 
+## Autostart (Windows-Gegenstueck zu `steamOs/install.sh`)
+
+Damit Pico-Monitor und Spiele-Scanner wie auf SteamOS dauerhaft im
+Hintergrund laufen, statt sie bei jedem Windows-Start von Hand in einem
+Terminal zu starten, gibt es vier zusaetzliche Skripte in diesem Ordner:
+
+| Datei | Entspricht (SteamOS) | Zweck |
+|---|---|---|
+| `pico_monitor_loop.bat` | `steamos-pico-monitor.service` (`Restart=always`) | Startet `pico_client.py` neu, sobald es sich beendet (Absturz, Netzwerkfehler, ...) - laeuft dadurch dauerhaft |
+| `game_scanner_loop.bat` | `steamos-game-scanner.timer` | Scannt die Steam-Bibliothek sofort und danach alle 30 Minuten erneut |
+| `install_autostart.bat` | `install.sh` | Richtet beide oben als Autostart ein und startet sie sofort |
+| `uninstall_autostart.bat` | `uninstall.sh` | Entfernt den Autostart wieder und beendet laufende Hintergrundprozesse |
+
+```powershell
+windows\install_autostart.bat
+```
+
+Legt dazu zwei kleine `.vbs`-Starter im Windows-Autostart-Ordner ab
+(`%APPDATA%\Microsoft\Windows\Start Menu\Programs\Startup`), die
+`pico_monitor_loop.bat` bzw. `game_scanner_loop.bat` **unsichtbar** (ohne
+Konsolenfenster) starten - ein direkt im Autostart-Ordner abgelegtes `.bat`
+wuerde sonst bei jeder Anmeldung ein sichtbares Terminalfenster oeffnen.
+Ab der naechsten Windows-Anmeldung starten beide automatisch; zusaetzlich
+startet `install_autostart.bat` sie sofort selbst (wie
+`systemctl --user enable --now`), ein Neustart ist also nicht noetig, um es
+sofort zu testen.
+
+Ausgaben (statt `journalctl` auf SteamOS) landen fortlaufend in
+`windows\logs\pico_monitor.log` bzw. `windows\logs\game_scanner.log`.
+
+Deinstallieren:
+
+```powershell
+windows\uninstall_autostart.bat
+```
+
+Entfernt die beiden `.vbs`-Starter wieder und beendet die dann laufenden
+Hintergrundprozesse sofort (Erkennung ueber den per `title` gesetzten
+Fenstertitel, auch bei unsichtbarem Fenster vorhanden - kein Task-Manager
+noetig).
+
+**Voraussetzung:** `python` muss im `PATH` liegen (wie bei der manuellen
+Verwendung oben) - `pico_monitor_loop.bat`/`game_scanner_loop.bat` rufen es
+mit vollem Pfad zu `pico_client.py`/`game_scanner.py` auf, aber `python`
+selbst ueber den `PATH`.
+
 ## Bekannte Windows-Eigenheiten
 
 - **UDP-Broadcast-Discovery** (`DISCOVER_PICO`) findet den Pico auf

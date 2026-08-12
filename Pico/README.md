@@ -61,9 +61,12 @@ separaten [Led_Pico](../Led_Pico) fuer den LED-Streifen).
        [SteamOS-GUI](../steamOs/gui))
    - **HTTP-Statuswebseite (Port 80):** `/` zeigt eine dunkel/modern
      gestaltete Statusseite (Geraetestatus, aktueller Tag, alle bekannten
-     Tags), `/status.json` liefert dieselben Daten als JSON. Nur im
-     normalen WLAN-Betrieb aktiv (nicht im Hotspot-Setup-Modus, siehe
-     `captive_portal.py`).
+     Tags), `/status.json` liefert dieselben Daten als JSON. `/control`
+     zeigt zusaetzlich eine vollwertige **Fernsteuerseite** (siehe
+     [Fernsteuerseite `/control`](#fernsteuerseite-control) unten),
+     `/control/settings` (POST) speichert deren Verbindungseinstellungen.
+     Alles nur im normalen WLAN-Betrieb aktiv (nicht im
+     Hotspot-Setup-Modus, siehe `captive_portal.py`).
    - **UDP-Discovery-Server (Port 5006):** Antwortet auf `DISCOVER_PICO` mit
      `PICO:<eigene-ip>`, damit SteamOS den Pico automatisch im Netzwerk finden
      kann, ohne die IP von Hand eintragen zu muessen.
@@ -142,6 +145,46 @@ eigene Erweiterungen mit `_thread` schreibst, beachte diese Einschraenkung.
   main.py): `rfid_test.py` direkt in Thonny ausfuehren - zeigt die
   physische UID sowie den kompletten Speicherinhalt (alle
   Sektoren/Bloecke) einer aufgelegten Karte im Shell-Fenster an.
+
+## Fernsteuerseite `/control`
+
+Neben der read-only Statusseite (`/`) hostet der Pico unter
+`http://<pico-ip>/control` eine zweite, vollstaendig bedienbare Seite
+(`control.html`), die alles kann, was sonst nur die
+[SteamOS-GUI](../steamOs/gui) auf dem PC bietet: Spielfarben setzen, Tags
+verknuepfen/trennen/faerben/loeschen, Sounds hochladen/abspielen/entfernen,
+ein Spiel "An Pico senden".
+
+**Wichtig zu verstehen:** Der Pico fuehrt dabei selbst nichts davon aus und
+speichert auch keine eigene Kopie von `games.db`. `status_server.py`
+liefert nur die Seite aus (`render_control_page()` in `status_server.py`
+fuellt lediglich die Platzhalter fuer die Verbindungseinstellungen ein,
+siehe unten) - alle eigentlichen Aktionen fuehrt anschliessend das
+JavaScript in `control.html` direkt im **Browser des Nutzers** aus, indem
+es `steamOs/gui/gui_server.py` auf dem PC per `fetch()` anspricht (neue
+`/api/...`-Routen dort, siehe `steamOs/README.md`). Der Pico ist also nur
+"Web-Hosting", keine Datenverbindung dazwischen - das haelt seinen sehr
+begrenzten Speicher (~264 KB RAM) unbelastet, insbesondere bei Sound-
+Uploads (mehrere MB), die dadurch nie durch den Pico selbst muessen.
+
+Vor der ersten Nutzung einmalig einrichten (Formular oben auf `/control`):
+
+- **PC-IP**: wird automatisch als Vorschlag vorausgefuellt, sobald
+  `steamOs/pico_client.py` mindestens einmal beim Pico angeklopft hat
+  (siehe `net_state.py` - reine Nebenwirkung des sowieso alle paar
+  Sekunden eintreffenden `PING`, kein eigener Mechanismus noetig). Laeuft
+  `pico_client.py` noch nicht oder ist die IP falsch, von Hand eintragen.
+- **PC-Port**: Standard `8080` (Port von `gui_server.py`).
+- **Token**: muss exakt mit `remote_control_token` in `steamOs/config.json`
+  uebereinstimmen - siehe dort, ohne passendes Token weist der PC alle
+  Anfragen mit `401` zurueck.
+
+Diese drei Werte werden in `remote_config.json` auf dem Pico gespeichert
+(`remote_config.py`, Formular-POST auf `/control/settings`) und bei jedem
+Aufruf von `/control` wieder in die Seite eingesetzt - sowohl escaped fuers
+HTML-Formular als auch (separat escaped) fuers eingebettete JavaScript, da
+sich das Token bewusst frei waehlen laesst und dabei theoretisch
+Sonderzeichen wie `"` oder `&` enthalten kann.
 
 ## Hardware / Verkabelung
 
@@ -272,8 +315,11 @@ einen Testtext an.
 | `captive_portal.py` | Webserver zur WLAN-Einrichtung im Access-Point-Modus (Logik; HTML in `setup.html`) |
 | `setup.html` | Seite der WLAN-Einrichtung (Formular fuer SSID/Passwort) |
 | `ping_server.py` | TCP-Steuer-Server (`PING`/`SELECT`/`TAG?`/`STARTED`/`TAGS?`/`LINK`/`TAGCOLOR`/`CURRENT?`) + HTTP-Statusserver (per `select()`) + kombinierter UDP-Discovery-/RFID-Hintergrund-Thread |
-| `status_server.py` | HTTP-Logik/JSON fuer die Statuswebseite (HTML in `status.html`) |
+| `status_server.py` | HTTP-Logik/JSON fuer Statusseite (`status.html`) **und** Fernsteuerseite (`control.html`) |
 | `status.html` | Statuswebseite (dark/modern), laedt Daten per JS von `/status.json` |
+| `control.html` | Fernsteuerseite (siehe [Fernsteuerseite `/control`](#fernsteuerseite-control)) - spricht per JS direkt mit `gui_server.py` auf dem PC |
+| `remote_config.py` | Persistiert die Verbindungseinstellungen (PC-IP/-Port/Token) der Fernsteuerseite (`remote_config.json`) |
+| `net_state.py` | Haelt die zuletzt gesehene PC-IP im RAM (aus den periodischen `PING`s), nur als Formular-Vorschlag fuer `/control` |
 | `mfrc522.py` | Low-Level-SPI-Treiber fuer den RC522-Chip |
 | `rfid_reader.py` | Erkennt die physische UID eines aufgelegten Tags |
 | `tag_store.py` | Persistente Zuordnungstabelle Tag-UID -> Spiel-UID + eigene Farbe (`tags.json`) |
@@ -284,6 +330,7 @@ einen Testtext an.
 | `wlan.conf` | Wird automatisch erzeugt, sobald WLAN-Daten gespeichert wurden (fruehere Versionen nutzten `wifi_config.json` - wird beim ersten Start automatisch dorthin migriert) |
 | `tags.json` | Wird automatisch erzeugt/erweitert, sobald ein Tag erkannt bzw. verknuepft wird |
 | `selected_game.txt` | Wird automatisch erzeugt/ueberschrieben, sobald SteamOS ein Spiel per `SELECT:<uid>` sendet |
+| `remote_config.json` | Wird automatisch erzeugt, sobald die Verbindungseinstellungen auf `/control` gespeichert werden |
 
 ## Installation auf dem Pico
 
@@ -293,11 +340,11 @@ einen Testtext an.
 2. Kopiere alle `.py`- **und `.html`-Dateien** aus diesem Ordner auf den Pico
    (z. B. mit Thonny per "Speichern unter" -> "Raspberry Pi Pico", oder mit
    `mpremote`) - `status_server.py`/`captive_portal.py` laden ihre Seiten zur
-   Laufzeit aus `status.html`/`setup.html`, diese muessen also mit hochgeladen
-   werden:
+   Laufzeit aus `status.html`/`setup.html`/`control.html`, diese muessen also
+   mit hochgeladen werden:
 
    ```
-   mpremote cp main.py wlan.py captive_portal.py setup.html ping_server.py status_server.py status.html mfrc522.py rfid_reader.py tag_store.py tag_manager.py i2c_lcd.py :
+   mpremote cp main.py wlan.py captive_portal.py setup.html ping_server.py status_server.py status.html control.html net_state.py remote_config.py mfrc522.py rfid_reader.py tag_store.py tag_manager.py i2c_lcd.py :
    ```
 
 3. RC522 (und optional das LCD) gemaess obiger Tabellen anschliessen.
