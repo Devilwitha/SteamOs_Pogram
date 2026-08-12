@@ -1,0 +1,5 @@
+{
+  "led_pico_ip": "",
+  "tcp_port": 5007,
+  "udp_port": 5008
+}

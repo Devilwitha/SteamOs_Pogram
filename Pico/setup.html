@@ -1,0 +1,89 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Pico WLAN Einrichtung</title>
+<style>
+:root{
+  color-scheme:dark;
+  --bg:#080b10;
+  --panel:#11151d;
+  --panel2:#161c27;
+  --border:#232c3d;
+  --cyan:#00e5ff;
+  --cyan-dim:#0891a8;
+  --magenta:#ff2e97;
+  --green:#39ff8c;
+  --amber:#ffb238;
+  --red:#ff4d6d;
+  --text:#e8edf5;
+  --dim:#7686a0;
+}
+*{box-sizing:border-box}
+html,body{margin:0;padding:0}
+body{
+  min-height:100vh;
+  font-family:"Segoe UI",Roboto,-apple-system,sans-serif;
+  color:var(--text);
+  background:
+    radial-gradient(circle at 12% -10%,rgba(0,229,255,.14),transparent 40%),
+    radial-gradient(circle at 90% 110%,rgba(255,46,151,.10),transparent 40%),
+    repeating-linear-gradient(rgba(255,255,255,.025) 0 1px,transparent 1px 26px),
+    repeating-linear-gradient(90deg,rgba(255,255,255,.025) 0 1px,transparent 1px 26px),
+    var(--bg);
+  display:flex;flex-direction:column;align-items:center;justify-content:center;padding:40px 16px;
+}
+.hud-top{
+  font-size:.72rem;font-weight:700;letter-spacing:.3em;text-transform:uppercase;
+  color:var(--cyan-dim);margin-bottom:24px;
+}
+.hud-top span{color:var(--cyan)}
+form{
+  background:linear-gradient(160deg,var(--panel2),var(--panel));
+  border:1px solid var(--border);
+  clip-path:polygon(18px 0,100% 0,100% calc(100% - 18px),calc(100% - 18px) 100%,0 100%,0 18px);
+  box-shadow:0 0 0 1px rgba(0,229,255,.05),0 0 40px rgba(0,229,255,.06),0 12px 30px rgba(0,0,0,.4);
+  padding:30px 28px;width:300px;
+}
+h2{
+  text-align:center;margin:0 0 22px;font-size:1.05rem;font-weight:700;
+  letter-spacing:.08em;text-transform:uppercase;color:var(--text);
+}
+h2::before,h2::after{content:"\25C6";color:var(--cyan);font-size:.7rem;margin:0 8px;vertical-align:middle}
+label{
+  display:block;font-size:.68rem;letter-spacing:.1em;text-transform:uppercase;
+  color:var(--dim);margin:14px 0 6px;
+}
+input{
+  width:100%;padding:10px 12px;margin:0;box-sizing:border-box;
+  background:#0c1017;border:1px solid var(--border);border-radius:4px;color:var(--text);font:inherit;
+}
+input:focus{outline:none;border-color:var(--cyan);box-shadow:0 0 0 3px rgba(0,229,255,.15)}
+button{
+  width:100%;margin-top:22px;padding:12px;font:inherit;font-weight:700;font-size:.85rem;
+  letter-spacing:.06em;text-transform:uppercase;cursor:pointer;color:#04141a;border:1px solid var(--cyan);
+  background:linear-gradient(180deg,var(--cyan),var(--cyan-dim));
+  clip-path:polygon(10px 0,100% 0,100% calc(100% - 10px),calc(100% - 10px) 100%,0 100%,0 10px);
+  box-shadow:0 0 14px rgba(0,229,255,.4);
+  transition:transform .12s ease,box-shadow .12s ease;
+}
+button:hover{transform:translateY(-1px);box-shadow:0 0 20px rgba(0,229,255,.6)}
+button:active{transform:translateY(0)}
+p.note{font-size:.78em;color:var(--dim);text-align:center;margin:16px 0 0;line-height:1.5}
+</style>
+</head>
+<body>
+<div class="hud-top"><span>&#9670;</span> Steam &middot; Pico Control System <span>&#9670;</span></div>
+<form method="POST" action="/save">
+<h2>WLAN einrichten</h2>
+__MESSAGE__
+<label for="ssid">WLAN Name (SSID)</label>
+<input type="text" id="ssid" name="ssid" placeholder="z. B. MeinNetzwerk" required>
+<label for="password">WLAN Passwort</label>
+<input type="password" id="password" name="password" placeholder="&#8226;&#8226;&#8226;&#8226;&#8226;&#8226;&#8226;&#8226;" required>
+<button type="submit">Speichern &amp; Verbinden</button>
+<p class="note">Der Pico startet nach dem Speichern neu und versucht sich zu verbinden.</p>
+</form>
+</body>
+</html>

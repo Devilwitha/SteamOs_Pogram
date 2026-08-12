@@ -1,0 +1,151 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Spielauswahl fuer Pico</title>
+<style>
+:root{
+  color-scheme:dark;
+  --bg:#080b10;
+  --panel:#11151d;
+  --panel2:#161c27;
+  --border:#232c3d;
+  --cyan:#00e5ff;
+  --cyan-dim:#0891a8;
+  --magenta:#ff2e97;
+  --green:#39ff8c;
+  --amber:#ffb238;
+  --red:#ff4d6d;
+  --text:#e8edf5;
+  --dim:#7686a0;
+}
+*{box-sizing:border-box}
+html,body{margin:0;padding:0}
+body{
+  min-height:100vh;
+  font-family:"Segoe UI",Roboto,-apple-system,sans-serif;
+  color:var(--text);
+  background:
+    radial-gradient(circle at 12% -10%,rgba(0,229,255,.12),transparent 40%),
+    radial-gradient(circle at 90% 110%,rgba(255,46,151,.10),transparent 40%),
+    repeating-linear-gradient(rgba(255,255,255,.025) 0 1px,transparent 1px 26px),
+    repeating-linear-gradient(90deg,rgba(255,255,255,.025) 0 1px,transparent 1px 26px),
+    var(--bg);
+  padding:28px 20px 60px;
+}
+.hud-top{
+  max-width:900px;margin:0 auto 22px;
+  text-align:center;
+  font-size:.72rem;font-weight:700;letter-spacing:.3em;text-transform:uppercase;
+  color:var(--cyan-dim);
+  padding-bottom:10px;
+  border-bottom:1px solid var(--border);
+}
+.hud-top span{color:var(--cyan)}
+.wrap{max-width:900px;margin:0 auto}
+h1,h2{font-weight:700;letter-spacing:.06em;text-transform:uppercase;margin:0}
+h1{
+  font-size:1.35rem;color:var(--text);
+  display:flex;align-items:center;gap:10px;
+  padding-left:12px;border-left:4px solid var(--cyan);
+  margin-bottom:20px;
+}
+h2{
+  font-size:.82rem;color:var(--cyan);
+  padding-left:10px;border-left:3px solid var(--magenta);
+  margin:36px 0 14px;
+}
+.panel{
+  background:linear-gradient(160deg,var(--panel2),var(--panel));
+  border:1px solid var(--border);
+  clip-path:polygon(16px 0,100% 0,100% calc(100% - 16px),calc(100% - 16px) 100%,0 100%,0 16px);
+  box-shadow:0 0 0 1px rgba(0,229,255,.04),0 8px 24px rgba(0,0,0,.35);
+  overflow:hidden;
+}
+table{width:100%;border-collapse:collapse;font-size:.92rem}
+th,td{padding:11px 14px;text-align:left;vertical-align:middle}
+th{
+  background:rgba(0,229,255,.06);color:var(--cyan);
+  font-size:.7rem;letter-spacing:.08em;text-transform:uppercase;
+  border-bottom:1px solid var(--border);
+}
+td{border-bottom:1px solid var(--border)}
+tr:last-child td{border-bottom:none}
+tbody tr:hover td{background:rgba(0,229,255,.035)}
+.badge{color:var(--dim);font-size:.82em;text-transform:uppercase;letter-spacing:.04em}
+.uid{color:var(--cyan-dim);font-size:.8em;font-family:Consolas,ui-monospace,monospace}
+.linked{color:var(--green);font-weight:600}
+.unlinked{color:var(--amber);font-weight:600}
+button{
+  font:inherit;font-weight:700;font-size:.76rem;letter-spacing:.04em;text-transform:uppercase;
+  padding:9px 16px;cursor:pointer;color:#04141a;border:1px solid var(--cyan);
+  background:linear-gradient(180deg,var(--cyan),var(--cyan-dim));
+  clip-path:polygon(8px 0,100% 0,100% calc(100% - 8px),calc(100% - 8px) 100%,0 100%,0 8px);
+  box-shadow:0 0 12px rgba(0,229,255,.35);
+  transition:transform .12s ease,box-shadow .12s ease;
+}
+button:hover{transform:translateY(-1px);box-shadow:0 0 18px rgba(0,229,255,.55)}
+button:active{transform:translateY(0)}
+button.secondary{
+  color:#210014;border-color:var(--magenta);
+  background:linear-gradient(180deg,var(--magenta),#a8125f);
+  box-shadow:0 0 12px rgba(255,46,151,.35);
+}
+button.secondary:hover{box-shadow:0 0 18px rgba(255,46,151,.55)}
+select{
+  font:inherit;padding:8px 10px;border-radius:4px;border:1px solid var(--border);
+  background:#0c1017;color:var(--text);max-width:170px;
+}
+select:focus{outline:none;border-color:var(--cyan);box-shadow:0 0 0 3px rgba(0,229,255,.15)}
+input[type=color]{
+  width:38px;height:34px;padding:2px;border-radius:4px;cursor:pointer;
+  border:1px solid var(--border);background:#0c1017;
+}
+.inline-form{display:flex;gap:8px;align-items:center;margin:0}
+.message{
+  padding:12px 16px;margin-bottom:18px;font-size:.9rem;font-weight:600;
+  background:rgba(255,255,255,.02);border-left:4px solid;
+}
+.success{border-color:var(--green);color:var(--green)}
+.error{border-color:var(--red);color:var(--red)}
+.hint{color:var(--dim);font-size:.82em;line-height:1.6;margin-top:10px}
+</style>
+</head>
+<body>
+<div class="hud-top"><span>&#9670;</span> Steam &middot; Pico Control System <span>&#9670;</span></div>
+<div class="wrap">
+<h1>Spiel an Pico senden</h1>
+
+<div class="panel">
+<table>
+<thead>
+<tr><th>Name</th><th>Status</th><th>UID</th><th>Farbe</th><th></th></tr>
+</thead>
+<tbody>
+<tr><td>ARC Raiders</td><td class='badge'>installiert</td><td class='uid'>4de1fcf3-b5b8-5058-905c-b8802ce7863f</td><td><form method='POST' action='/set_game_color' class='inline-form'><input type='hidden' name='uid' value='4de1fcf3-b5b8-5058-905c-b8802ce7863f'><input type='color' name='color' value='#00e5ff' onchange='this.form.submit()'></form></td><td><form method='POST' action='/send' class='inline-form'><input type='hidden' name='uid' value='4de1fcf3-b5b8-5058-905c-b8802ce7863f'><button type='submit'>An Pico senden</button></form></td></tr><tr><td>Basement To The Sky Demo</td><td class='badge'>installiert</td><td class='uid'>066fca4d-d223-503e-9f7b-a0faec9a9fc5</td><td><form method='POST' action='/set_game_color' class='inline-form'><input type='hidden' name='uid' value='066fca4d-d223-503e-9f7b-a0faec9a9fc5'><input type='color' name='color' value='#00e5ff' onchange='this.form.submit()'></form></td><td><form method='POST' action='/send' class='inline-form'><input type='hidden' name='uid' value='066fca4d-d223-503e-9f7b-a0faec9a9fc5'><button type='submit'>An Pico senden</button></form></td></tr><tr><td>Gray Zone Warfare</td><td class='badge'>installiert</td><td class='uid'>7149f6b8-66f8-55f5-a273-5bdebe324e20</td><td><form method='POST' action='/set_game_color' class='inline-form'><input type='hidden' name='uid' value='7149f6b8-66f8-55f5-a273-5bdebe324e20'><input type='color' name='color' value='#00e5ff' onchange='this.form.submit()'></form></td><td><form method='POST' action='/send' class='inline-form'><input type='hidden' name='uid' value='7149f6b8-66f8-55f5-a273-5bdebe324e20'><button type='submit'>An Pico senden</button></form></td></tr><tr><td>Grounded 2</td><td class='badge'>installiert</td><td class='uid'>6a6b0bee-7629-579f-87fc-ccec32c93a13</td><td><form method='POST' action='/set_game_color' class='inline-form'><input type='hidden' name='uid' value='6a6b0bee-7629-579f-87fc-ccec32c93a13'><input type='color' name='color' value='#00e5ff' onchange='this.form.submit()'></form></td><td><form method='POST' action='/send' class='inline-form'><input type='hidden' name='uid' value='6a6b0bee-7629-579f-87fc-ccec32c93a13'><button type='submit'>An Pico senden</button></form></td></tr><tr><td>Halo: Campaign Evolved</td><td class='badge'>installiert</td><td class='uid'>19f5a55e-ed47-577c-a3e3-b395cb4a584b</td><td><form method='POST' action='/set_game_color' class='inline-form'><input type='hidden' name='uid' value='19f5a55e-ed47-577c-a3e3-b395cb4a584b'><input type='color' name='color' value='#00e5ff' onchange='this.form.submit()'></form></td><td><form method='POST' action='/send' class='inline-form'><input type='hidden' name='uid' value='19f5a55e-ed47-577c-a3e3-b395cb4a584b'><button type='submit'>An Pico senden</button></form></td></tr><tr><td>Halo: The Master Chief Collection</td><td class='badge'>installiert</td><td class='uid'>807ccc16-d9d4-500c-84eb-8b0dab41a893</td><td><form method='POST' action='/set_game_color' class='inline-form'><input type='hidden' name='uid' value='807ccc16-d9d4-500c-84eb-8b0dab41a893'><input type='color' name='color' value='#00e5ff' onchange='this.form.submit()'></form></td><td><form method='POST' action='/send' class='inline-form'><input type='hidden' name='uid' value='807ccc16-d9d4-500c-84eb-8b0dab41a893'><button type='submit'>An Pico senden</button></form></td></tr><tr><td>HELLDIVERS™ 2</td><td class='badge'>installiert</td><td class='uid'>f704ad09-6fc0-56f8-a01d-56cabffe387f</td><td><form method='POST' action='/set_game_color' class='inline-form'><input type='hidden' name='uid' value='f704ad09-6fc0-56f8-a01d-56cabffe387f'><input type='color' name='color' value='#00e5ff' onchange='this.form.submit()'></form></td><td><form method='POST' action='/send' class='inline-form'><input type='hidden' name='uid' value='f704ad09-6fc0-56f8-a01d-56cabffe387f'><button type='submit'>An Pico senden</button></form></td></tr><tr><td>Lethal Company</td><td class='badge'>installiert</td><td class='uid'>e45e1bcf-5201-51f3-ad3c-d14e193f3c98</td><td><form method='POST' action='/set_game_color' class='inline-form'><input type='hidden' name='uid' value='e45e1bcf-5201-51f3-ad3c-d14e193f3c98'><input type='color' name='color' value='#00e5ff' onchange='this.form.submit()'></form></td><td><form method='POST' action='/send' class='inline-form'><input type='hidden' name='uid' value='e45e1bcf-5201-51f3-ad3c-d14e193f3c98'><button type='submit'>An Pico senden</button></form></td></tr><tr><td>Liftoff</td><td class='badge'>installiert</td><td class='uid'>fef20045-b9c7-5bec-b3ea-6c48e347edae</td><td><form method='POST' action='/set_game_color' class='inline-form'><input type='hidden' name='uid' value='fef20045-b9c7-5bec-b3ea-6c48e347edae'><input type='color' name='color' value='#00e5ff' onchange='this.form.submit()'></form></td><td><form method='POST' action='/send' class='inline-form'><input type='hidden' name='uid' value='fef20045-b9c7-5bec-b3ea-6c48e347edae'><button type='submit'>An Pico senden</button></form></td></tr><tr><td>Liftoff: Micro Drones</td><td class='badge'>installiert</td><td class='uid'>f24907d3-f7bd-5d8f-ac10-c82b30b682ba</td><td><form method='POST' action='/set_game_color' class='inline-form'><input type='hidden' name='uid' value='f24907d3-f7bd-5d8f-ac10-c82b30b682ba'><input type='color' name='color' value='#00e5ff' onchange='this.form.submit()'></form></td><td><form method='POST' action='/send' class='inline-form'><input type='hidden' name='uid' value='f24907d3-f7bd-5d8f-ac10-c82b30b682ba'><button type='submit'>An Pico senden</button></form></td></tr><tr><td>MECCHA CHAMELEON</td><td class='badge'>installiert</td><td class='uid'>d637b365-182b-5ec5-ab9c-e8c2a616345a</td><td><form method='POST' action='/set_game_color' class='inline-form'><input type='hidden' name='uid' value='d637b365-182b-5ec5-ab9c-e8c2a616345a'><input type='color' name='color' value='#00e5ff' onchange='this.form.submit()'></form></td><td><form method='POST' action='/send' class='inline-form'><input type='hidden' name='uid' value='d637b365-182b-5ec5-ab9c-e8c2a616345a'><button type='submit'>An Pico senden</button></form></td></tr><tr><td>Plants vs. Zombies™: Replanted</td><td class='badge'>nicht installiert</td><td class='uid'>0c2269c4-77fa-5ae1-879e-ae54e2a02c1d</td><td><form method='POST' action='/set_game_color' class='inline-form'><input type='hidden' name='uid' value='0c2269c4-77fa-5ae1-879e-ae54e2a02c1d'><input type='color' name='color' value='#00e5ff' onchange='this.form.submit()'></form></td><td><form method='POST' action='/send' class='inline-form'><input type='hidden' name='uid' value='0c2269c4-77fa-5ae1-879e-ae54e2a02c1d'><button type='submit'>An Pico senden</button></form></td></tr><tr><td>S.T.A.L.K.E.R. 2: Heart of Chornobyl</td><td class='badge'>installiert</td><td class='uid'>0ecd9cf3-6e75-56b0-9d04-8a10e14eee5b</td><td><form method='POST' action='/set_game_color' class='inline-form'><input type='hidden' name='uid' value='0ecd9cf3-6e75-56b0-9d04-8a10e14eee5b'><input type='color' name='color' value='#00e5ff' onchange='this.form.submit()'></form></td><td><form method='POST' action='/send' class='inline-form'><input type='hidden' name='uid' value='0ecd9cf3-6e75-56b0-9d04-8a10e14eee5b'><button type='submit'>An Pico senden</button></form></td></tr><tr><td>Schedule I</td><td class='badge'>installiert</td><td class='uid'>0054bcf1-4bcb-51a6-9664-220fa44239b0</td><td><form method='POST' action='/set_game_color' class='inline-form'><input type='hidden' name='uid' value='0054bcf1-4bcb-51a6-9664-220fa44239b0'><input type='color' name='color' value='#00e5ff' onchange='this.form.submit()'></form></td><td><form method='POST' action='/send' class='inline-form'><input type='hidden' name='uid' value='0054bcf1-4bcb-51a6-9664-220fa44239b0'><button type='submit'>An Pico senden</button></form></td></tr><tr><td>STAR WARS Jedi: Survivor™</td><td class='badge'>installiert</td><td class='uid'>1c478789-2e6a-515e-8d40-5c0c5f83ace6</td><td><form method='POST' action='/set_game_color' class='inline-form'><input type='hidden' name='uid' value='1c478789-2e6a-515e-8d40-5c0c5f83ace6'><input type='color' name='color' value='#00e5ff' onchange='this.form.submit()'></form></td><td><form method='POST' action='/send' class='inline-form'><input type='hidden' name='uid' value='1c478789-2e6a-515e-8d40-5c0c5f83ace6'><button type='submit'>An Pico senden</button></form></td></tr><tr><td>STAR WARS™ Battlefront™ II</td><td class='badge'>installiert</td><td class='uid'>6973eb15-c9ac-559c-abe8-a6f6bcf83b80</td><td><form method='POST' action='/set_game_color' class='inline-form'><input type='hidden' name='uid' value='6973eb15-c9ac-559c-abe8-a6f6bcf83b80'><input type='color' name='color' value='#00e5ff' onchange='this.form.submit()'></form></td><td><form method='POST' action='/send' class='inline-form'><input type='hidden' name='uid' value='6973eb15-c9ac-559c-abe8-a6f6bcf83b80'><button type='submit'>An Pico senden</button></form></td></tr><tr><td>Steamworks Common Redistributables</td><td class='badge'>installiert</td><td class='uid'>14d75746-9835-5781-ac0a-319a8a239687</td><td><form method='POST' action='/set_game_color' class='inline-form'><input type='hidden' name='uid' value='14d75746-9835-5781-ac0a-319a8a239687'><input type='color' name='color' value='#00e5ff' onchange='this.form.submit()'></form></td><td><form method='POST' action='/send' class='inline-form'><input type='hidden' name='uid' value='14d75746-9835-5781-ac0a-319a8a239687'><button type='submit'>An Pico senden</button></form></td></tr><tr><td>The Elder Scrolls IV: Oblivion Remastered</td><td class='badge'>installiert</td><td class='uid'>b08fab36-f3f8-57a8-9ecc-260a50517ec1</td><td><form method='POST' action='/set_game_color' class='inline-form'><input type='hidden' name='uid' value='b08fab36-f3f8-57a8-9ecc-260a50517ec1'><input type='color' name='color' value='#00e5ff' onchange='this.form.submit()'></form></td><td><form method='POST' action='/send' class='inline-form'><input type='hidden' name='uid' value='b08fab36-f3f8-57a8-9ecc-260a50517ec1'><button type='submit'>An Pico senden</button></form></td></tr><tr><td>Uncrashed : FPV Drone Simulator</td><td class='badge'>installiert</td><td class='uid'>7c763753-97a9-5a37-8d77-9815e09ac51d</td><td><form method='POST' action='/set_game_color' class='inline-form'><input type='hidden' name='uid' value='7c763753-97a9-5a37-8d77-9815e09ac51d'><input type='color' name='color' value='#00e5ff' onchange='this.form.submit()'></form></td><td><form method='POST' action='/send' class='inline-form'><input type='hidden' name='uid' value='7c763753-97a9-5a37-8d77-9815e09ac51d'><button type='submit'>An Pico senden</button></form></td></tr><tr><td>VEIN</td><td class='badge'>installiert</td><td class='uid'>022a35d2-f345-5afd-8860-670347d3dda1</td><td><form method='POST' action='/set_game_color' class='inline-form'><input type='hidden' name='uid' value='022a35d2-f345-5afd-8860-670347d3dda1'><input type='color' name='color' value='#00e5ff' onchange='this.form.submit()'></form></td><td><form method='POST' action='/send' class='inline-form'><input type='hidden' name='uid' value='022a35d2-f345-5afd-8860-670347d3dda1'><button type='submit'>An Pico senden</button></form></td></tr><tr><td>Wallpaper Engine</td><td class='badge'>installiert</td><td class='uid'>a3a8dd90-1d1d-5ffa-bf00-188c83c5aa75</td><td><form method='POST' action='/set_game_color' class='inline-form'><input type='hidden' name='uid' value='a3a8dd90-1d1d-5ffa-bf00-188c83c5aa75'><input type='color' name='color' value='#00e5ff' onchange='this.form.submit()'></form></td><td><form method='POST' action='/send' class='inline-form'><input type='hidden' name='uid' value='a3a8dd90-1d1d-5ffa-bf00-188c83c5aa75'><button type='submit'>An Pico senden</button></form></td></tr>
+</tbody>
+</table>
+</div>
+
+<h2>Bekannte RFID-Tags</h2>
+<div class="panel">
+<table>
+<thead>
+<tr><th>Tag-UID</th><th>Verknuepftes Spiel</th><th>Farbe</th><th colspan="2"></th></tr>
+</thead>
+<tbody>
+<tr><td colspan='5'>Pico nicht erreichbar - Tag-Liste kann nicht geladen werden.</td></tr>
+</tbody>
+</table>
+</div>
+<p class="hint">Ein Tag erscheint hier automatisch, sobald er einmal an den RC522 gehalten wurde -
+auch ohne vorher ein Spiel ausgewaehlt zu haben. Verknuepfung ist in beide Richtungen moeglich:
+entweder oben ein Spiel senden und danach einen Tag auflegen, oder hier direkt einem bereits
+bekannten Tag ein Spiel zuweisen.</p>
+<p class="hint">Farbe: Ein Klick auf das Farbfeld speichert die Auswahl sofort. Die Farbe eines Tags
+hat Vorrang vor der Farbe des verknuepften Spiels und wird an einen optionalen zweiten Pico
+(Led_Pico) weitergereicht, der damit einen LED-Streifen ansteuert.</p>
+</div>
+</body>
+</html>

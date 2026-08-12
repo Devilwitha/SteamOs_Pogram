@@ -1,0 +1,147 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Pico Status</title>
+<style>
+:root{
+  color-scheme:dark;
+  --bg:#080b10;
+  --panel:#11151d;
+  --panel2:#161c27;
+  --border:#232c3d;
+  --cyan:#00e5ff;
+  --cyan-dim:#0891a8;
+  --magenta:#ff2e97;
+  --green:#39ff8c;
+  --amber:#ffb238;
+  --red:#ff4d6d;
+  --text:#e8edf5;
+  --dim:#7686a0;
+}
+*{box-sizing:border-box}
+html,body{margin:0;padding:0}
+body{
+  min-height:100vh;
+  font-family:"Segoe UI",Roboto,-apple-system,sans-serif;
+  color:var(--text);
+  background:
+    radial-gradient(circle at 12% -10%,rgba(0,229,255,.12),transparent 40%),
+    radial-gradient(circle at 90% 110%,rgba(255,46,151,.10),transparent 40%),
+    repeating-linear-gradient(rgba(255,255,255,.025) 0 1px,transparent 1px 26px),
+    repeating-linear-gradient(90deg,rgba(255,255,255,.025) 0 1px,transparent 1px 26px),
+    var(--bg);
+  padding:28px 20px 40px;
+  display:flex;justify-content:center;
+}
+main{width:100%;max-width:640px}
+.hud-top{
+  text-align:center;
+  font-size:.72rem;font-weight:700;letter-spacing:.3em;text-transform:uppercase;
+  color:var(--cyan-dim);
+  padding-bottom:10px;margin-bottom:22px;
+  border-bottom:1px solid var(--border);
+}
+.hud-top span{color:var(--cyan)}
+h1{
+  font-size:1.3rem;font-weight:700;letter-spacing:.06em;text-transform:uppercase;
+  margin:0 0 20px;padding-left:12px;border-left:4px solid var(--cyan);
+  display:flex;align-items:center;gap:10px;
+}
+.dot{
+  width:11px;height:11px;border-radius:50%;background:var(--green);display:inline-block;
+  box-shadow:0 0 8px var(--green),0 0 16px var(--green);
+  animation:pulse 1.6s ease-in-out infinite;
+}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.4}}
+.card{
+  background:linear-gradient(160deg,var(--panel2),var(--panel));
+  border:1px solid var(--border);
+  clip-path:polygon(16px 0,100% 0,100% calc(100% - 16px),calc(100% - 16px) 100%,0 100%,0 16px);
+  box-shadow:0 0 0 1px rgba(0,229,255,.04),0 8px 24px rgba(0,0,0,.35);
+  padding:18px 20px;margin-bottom:16px;
+}
+.card h2{
+  margin:0 0 12px;font-size:.72rem;text-transform:uppercase;letter-spacing:.1em;
+  color:var(--cyan);
+}
+.row{display:flex;justify-content:space-between;padding:8px 0;border-bottom:1px solid var(--border);font-size:.95rem}
+.row:last-child{border-bottom:none}
+.row span:first-child{color:var(--dim)}
+table{width:100%;border-collapse:collapse;font-size:.88rem}
+th,td{text-align:left;padding:9px 6px;border-bottom:1px solid var(--border)}
+th{color:var(--cyan);font-weight:700;font-size:.7rem;letter-spacing:.08em;text-transform:uppercase}
+tr:last-child td{border-bottom:none}
+.uid{font-family:Consolas,ui-monospace,monospace;color:var(--cyan-dim)}
+.empty{color:var(--dim);font-style:italic}
+.linked{color:var(--green);font-weight:600}
+.unlinked{color:var(--amber);font-weight:600}
+.nav-btn{
+  display:block;text-align:center;text-decoration:none;
+  margin-top:4px;padding:12px 16px;cursor:pointer;
+  font-weight:700;font-size:.78rem;letter-spacing:.06em;text-transform:uppercase;
+  color:#04141a;border:1px solid var(--cyan);
+  background:linear-gradient(180deg,var(--cyan),var(--cyan-dim));
+  clip-path:polygon(10px 0,100% 0,100% calc(100% - 10px),calc(100% - 10px) 100%,0 100%,0 10px);
+  box-shadow:0 0 12px rgba(0,229,255,.35);
+}
+.nav-btn:hover{box-shadow:0 0 18px rgba(0,229,255,.55)}
+footer{text-align:center;color:var(--dim);font-size:.75rem;margin-top:16px;letter-spacing:.04em}
+</style>
+</head>
+<body>
+<main>
+<div class="hud-top"><span>&#9670;</span> Steam &middot; Pico Control System <span>&#9670;</span></div>
+<h1><span class="dot"></span>Pico &middot; Geraetestatus</h1>
+<div class="card">
+<h2>Verbindung</h2>
+<div class="row"><span>Hostname</span><span id="hostname">-</span></div>
+<div class="row"><span>IP-Adresse</span><span id="ip">-</span></div>
+<div class="row"><span>Modus</span><span id="modus">-</span></div>
+</div>
+<div class="card">
+<h2>Aktueller Tag</h2>
+<div class="row"><span>UID</span><span id="tag-uid" class="uid">kein Tag aufgelegt</span></div>
+<div class="row"><span>Spiel-UID</span><span id="tag-game" class="uid">-</span></div>
+</div>
+<div class="card">
+<h2>Bekannte Tags</h2>
+<table>
+<thead><tr><th>UID</th><th>Spiel-UID</th></tr></thead>
+<tbody id="tags-body"><tr><td colspan="2" class="empty">Lade...</td></tr></tbody>
+</table>
+</div>
+<a class="nav-btn" href="/control">&#9881;&#65039; Zur Fernsteuerung</a>
+<footer>Aktualisiert automatisch alle 2 Sekunden</footer>
+</main>
+<script>
+async function aktualisieren() {
+  try {
+    const res = await fetch('/status.json', {cache: 'no-store'});
+    const daten = await res.json();
+    document.getElementById('hostname').textContent = daten.hostname || '-';
+    document.getElementById('ip').textContent = daten.ip || '-';
+    document.getElementById('modus').textContent = daten.modus;
+
+    const tag = daten.aktueller_tag;
+    document.getElementById('tag-uid').textContent = tag ? tag.uid : 'kein Tag aufgelegt';
+    document.getElementById('tag-game').textContent = (tag && tag.game_uid) ? tag.game_uid : '-';
+
+    const body = document.getElementById('tags-body');
+    if (!daten.tags.length) {
+      body.innerHTML = '<tr><td colspan="2" class="empty">Noch keine Tags erkannt</td></tr>';
+    } else {
+      body.innerHTML = daten.tags.map(t => {
+        const cls = t.game_uid ? 'linked' : 'unlinked';
+        const spiel = t.game_uid ? t.game_uid : 'nicht verknuepft';
+        return `<tr><td class="uid">${t.uid}</td><td class="uid ${cls}">${spiel}</td></tr>`;
+      }).join('');
+    }
+  } catch (e) {}
+}
+aktualisieren();
+setInterval(aktualisieren, 2000);
+</script>
+</body>
+</html>

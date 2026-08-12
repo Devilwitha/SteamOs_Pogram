@@ -1,0 +1,5 @@
+*.pyc
+*.pyc
+/Pico/__pycache__
+/steamOs/__pycache__
+/windows/logs
