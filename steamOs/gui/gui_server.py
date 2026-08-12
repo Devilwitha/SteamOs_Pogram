@@ -99,7 +99,7 @@ def _render_game_rows(games):
     rows = []
     for game in games:
         badge = "installiert" if game["installed"] else "nicht installiert"
-        color = game["color"] or "#1a9fff"
+        color = game["color"] or "#00e5ff"
         rows.append(
             "<tr>"
             f"<td>{_escape(game['name'])}</td>"
@@ -134,7 +134,7 @@ def _render_tag_rows(tags, games):
     for tag in tags:
         uid = tag.get("uid", "")
         game_uid = tag.get("game_uid")
-        color = tag.get("color") or "#1a9fff"
+        color = tag.get("color") or "#00e5ff"
 
         options = ["<option value=''>Spiel waehlen ...</option>"]
         for g in games:

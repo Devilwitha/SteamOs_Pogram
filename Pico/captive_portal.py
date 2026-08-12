@@ -95,12 +95,12 @@ def run(on_credentials_saved):
 
                 if ssid and password:
                     save_credentials(ssid, password)
-                    _send_html(cl, _render("<p style='color:#4caf50'>Gespeichert! Neustart...</p>"))
+                    _send_html(cl, _render("<p style='color:var(--green);font-weight:700'>Gespeichert! Neustart...</p>"))
                     cl.close()
                     on_credentials_saved()
                     continue
                 else:
-                    response_html = _render("<p style='color:#f44336'>Bitte alle Felder ausfuellen.</p>")
+                    response_html = _render("<p style='color:var(--red);font-weight:700'>Bitte alle Felder ausfuellen.</p>")
             else:
                 response_html = _render("")
 
