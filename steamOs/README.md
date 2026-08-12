@@ -85,6 +85,7 @@ Tabelle `games`:
 | `installed` | `1`, falls der Installationsordner tatsaechlich vorhanden ist, sonst `0` |
 | `install_path` | Pfad zum installierten Spiel, nur gesetzt wenn `installed = 1` |
 | `launch_command` | `steam -applaunch <appid>`, nur gesetzt wenn `installed = 1` (startet das Spiel inkl. Proton-Kompatibilitaetsschicht ueber den Steam-Client) |
+| `color` | Optionale, in der GUI zugewiesene Farbe (Hex, z. B. `#ff8800`) fuer den [Led_Pico](../Led_Pico) - wird von `game_scanner.py` beim erneuten Scannen **nicht** ueberschrieben |
 | `last_scanned` | Zeitpunkt des letzten Scans |
 
 Manuell ausfuehren:
@@ -147,6 +148,20 @@ Nach dem `SELECT`-Schritt muss noch ein Tag an den RC522 gehalten werden -
 erst dann verknuepft der Pico ihn tatsaechlich mit der UID (siehe
 [Pico/README.md](../Pico/README.md)).
 
+### Farbe pro Spiel/Tag (fuer den Led_Pico)
+
+Sowohl in der Spiele- als auch in der Tag-Tabelle gibt es eine Spalte
+"Farbe" mit einem Farbfeld je Zeile - Aenderungen werden sofort
+gespeichert (Spiel-Farbe direkt in `games.db`, Tag-Farbe per
+`TAGCOLOR:<uid>:<farbe>` auf dem Pico). Eine am Tag gesetzte Farbe hat
+Vorrang vor der Farbe des verknuepften Spiels. Beide werden von
+`pico_client.py` genutzt, um einen optionalen zweiten Pico (siehe
+[../Led_Pico](../Led_Pico)) mit der passenden Farbe fuer einen
+LED-Streifen zu versorgen - siehe
+[Automatischer Spielstart](#automatischer-spielstart-per-rfid-tag) und
+[Konfiguration des Led_Pico](#konfiguration-des-led_pico-led_configjson)
+unten.
+
 ### Bekannte Tags verwalten (beide Richtungen)
 
 Unterhalb der Spieleliste zeigt die GUI eine zweite Tabelle "Bekannte
@@ -174,6 +189,29 @@ Takt zusaetzlich Folgendes:
    ein anderer Tag aufgelegt oder der Tag entfernt (und neu aufgelegt) wird -
    ein bereits gestartetes Spiel wird also nicht bei jedem Poll erneut
    gestartet, solange derselbe Tag liegen bleibt.
+4. Unabhaengig davon wird bei jedem Takt zusaetzlich per `CURRENT?` der
+   aktuell aufliegende Tag abgefragt (nicht einmalig wie `TAG?`, siehe
+   oben) und die daraus ermittelte Farbe (Tag-Farbe, sonst Spiel-Farbe,
+   sonst aus) an einen optionalen [Led_Pico](../Led_Pico) weitergereicht -
+   nur wenn sie sich seit dem letzten Takt geaendert hat.
+
+## Konfiguration des Led_Pico (`led_config.json`)
+
+```json
+{
+  "led_pico_ip": "",
+  "tcp_port": 5007,
+  "udp_port": 5008
+}
+```
+
+Analog zu `config.json` fuer den RFID-Pico, aber fuer den optionalen
+zweiten Pico ([../Led_Pico](../Led_Pico)), der einen LED-Streifen in der
+Farbe des aktuellen Spiels/Tags ansteuert. `led_pico_ip` leer lassen fuer
+automatische Suche per UDP-Broadcast, sonst fest eintragen. Ist kein
+Led_Pico im Netzwerk konfiguriert/erreichbar, wird das beim Farb-Update
+stillschweigend uebersprungen - er ist rein optional, der RFID-Pico/
+Spielstart funktioniert unabhaengig davon.
 
 ## Konfiguration (`config.json`)
 

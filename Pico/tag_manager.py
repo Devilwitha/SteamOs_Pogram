@@ -19,6 +19,13 @@ Ablauf von poll_once():
 - Ist die aufliegende Karte mit einer Spiel-UID verknuepft, wird das ueber
   get_tag_status() so lange gemeldet, bis SteamOS es per confirm_started()
   bestaetigt - danach erst wieder bei Tag-Wechsel/-Entfernung.
+
+Zusaetzlich kann jedem Tag unabhaengig von der Spiel-Verknuepfung eine
+eigene Farbe zugewiesen werden (set_color(), ueber TAGCOLOR:<uid>:<farbe>
+aus der SteamOS-GUI). get_current() liefert diese Farbe (mit Vorrang vor
+der Farbe des verknuepften Spiels) fuer den Led_Pico, der darueber einen
+LED-Streifen in der passenden Farbe ansteuert (siehe ../Led_Pico und
+steamOs/pico_client.py).
 """
 import _thread
 
@@ -50,6 +57,13 @@ def request_write(game_uid):
         _pending_write_uid = game_uid
     finally:
         _lock.release()
+
+
+def set_color(uid_hex, color):
+    """Setzt die eigene LED-Farbe eines bereits bekannten Tags (siehe
+    ../Led_Pico) - unabhaengig von einer Spiel-Verknuepfung. Gibt False
+    zurueck, wenn dieser Tag noch nie gesehen wurde."""
+    return tag_store.set_color(uid_hex, color)
 
 
 def link_existing(uid_hex, game_uid):
@@ -84,15 +98,24 @@ def get_tag_status():
 
 
 def get_current():
-    """Fuer den Status-Server: aktuell aufliegender Tag (UID + verknuepfte
-    Spiel-UID, falls vorhanden), oder None wenn keine Karte aufliegt."""
+    """Fuer den Status-Server und CURRENT? (siehe ping_server.py): aktuell
+    aufliegender Tag (UID, verknuepfte Spiel-UID sowie eigene Farbe,
+    jeweils falls vorhanden), oder None wenn keine Karte aufliegt. Die
+    Farbe wird bewusst nicht im Debounce-Zustand gecacht, sondern bei
+    jedem Aufruf frisch aus tag_store gelesen, damit eine per TAGCOLOR
+    geaenderte Farbe sofort wirkt, ohne dass der Tag neu aufgelegt werden
+    muss."""
     _lock.acquire()
     try:
         if _current_uid_hex is None:
             return None
-        return {"uid": _current_uid_hex, "game_uid": _current_game_uid}
+        uid_hex = _current_uid_hex
+        game_uid = _current_game_uid
     finally:
         _lock.release()
+
+    entry = tag_store.get(uid_hex) or {}
+    return {"uid": uid_hex, "game_uid": game_uid, "color": entry.get("color")}
 
 
 def list_tags():

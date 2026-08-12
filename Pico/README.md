@@ -37,6 +37,16 @@ optionalem **16x2-I2C-LCD**.
        direkt mit einem Spiel, ohne dass er erneut aufgelegt werden muss
        (leere Spiel-UID = Verknuepfung aufheben); Antwort `OK:LINK:<uid>`
        oder `ERROR:unknown_tag`
+     - `TAGCOLOR:<uid>:<farbe>` -> setzt (leere Farbe = loescht) die
+       eigene LED-Farbe eines bereits bekannten Tags, unabhaengig von der
+       Spiel-Verknuepfung; Antwort `OK:TAGCOLOR:<uid>` oder
+       `ERROR:unknown_tag`
+     - `CURRENT?` -> Antwort `CURRENT:<json>` mit dem gerade aufliegenden
+       Tag (`uid`/`game_uid`/`color`), unabhaengig vom einmaligen
+       `TAG?`-Meldezustand, sonst `CURRENT:NONE` - wird von
+       `steamOs/pico_client.py` genutzt, um den optionalen
+       [Led_Pico](../Led_Pico) kontinuierlich mit der passenden Farbe zu
+       versorgen
    - **HTTP-Statuswebseite (Port 80):** `/` zeigt eine dunkel/modern
      gestaltete Statusseite (Geraetestatus, aktueller Tag, alle bekannten
      Tags), `/status.json` liefert dieselben Daten als JSON. Nur im
@@ -92,6 +102,13 @@ eigene Erweiterungen mit `_thread` schreibst, beachte diese Einschraenkung.
   hat das Spiel gestartet). Danach wird dieselbe UID **nicht erneut**
   gemeldet - erst wieder, wenn ein anderer Tag aufgelegt oder der Tag
   entfernt (und ggf. erneut aufgelegt) wird.
+- Zusaetzlich zur Spiel-Verknuepfung kann jedem Tag ueber `TAGCOLOR` (aus
+  der SteamOS-GUI) eine eigene Farbe zugewiesen werden. Anders als die
+  Spielstart-Meldung ist das **nicht** einmalig: `CURRENT?` liefert die
+  Farbe des aktuell aufliegenden Tags bei jeder Abfrage frisch, damit der
+  optionale [Led_Pico](../Led_Pico) einen LED-Streifen laufend in der
+  passenden Farbe zeigt, solange der Tag aufliegt (Tag-Farbe hat Vorrang
+  vor der Farbe des verknuepften Spiels).
 - Zum Testen/Debuggen des rohen RC522-Speicherinhalts (unabhaengig von
   main.py): `rfid_test.py` direkt in Thonny ausfuehren - zeigt die
   physische UID sowie den kompletten Speicherinhalt (alle
@@ -171,12 +188,12 @@ einen Testtext an.
 | `wlan.py` | WLAN-Verbindung + Hotspot-Fallback (Struktur analog zu [github.com/Devilwitha/Pico/Picodesk](https://github.com/Devilwitha/Pico/tree/main/Picodesk)) |
 | `captive_portal.py` | Webserver zur WLAN-Einrichtung im Access-Point-Modus (Logik; HTML in `setup.html`) |
 | `setup.html` | Seite der WLAN-Einrichtung (Formular fuer SSID/Passwort) |
-| `ping_server.py` | TCP-Steuer-Server (`PING`/`SELECT`/`TAG?`/`STARTED`/`TAGS?`/`LINK`) + HTTP-Statusserver (per `select()`) + kombinierter UDP-Discovery-/RFID-Hintergrund-Thread |
+| `ping_server.py` | TCP-Steuer-Server (`PING`/`SELECT`/`TAG?`/`STARTED`/`TAGS?`/`LINK`/`TAGCOLOR`/`CURRENT?`) + HTTP-Statusserver (per `select()`) + kombinierter UDP-Discovery-/RFID-Hintergrund-Thread |
 | `status_server.py` | HTTP-Logik/JSON fuer die Statuswebseite (HTML in `status.html`) |
 | `status.html` | Statuswebseite (dark/modern), laedt Daten per JS von `/status.json` |
 | `mfrc522.py` | Low-Level-SPI-Treiber fuer den RC522-Chip |
 | `rfid_reader.py` | Erkennt die physische UID eines aufgelegten Tags |
-| `tag_store.py` | Persistente Zuordnungstabelle Tag-UID -> Spiel-UID (`tags.json`) |
+| `tag_store.py` | Persistente Zuordnungstabelle Tag-UID -> Spiel-UID + eigene Farbe (`tags.json`) |
 | `tag_manager.py` | Debounce-Zustand fuer die Tag-Erkennung/-Meldung, `poll_once()` wird von `ping_server.py` aufgerufen |
 | `rfid_test.py` | Eigenstaendiges Diagnoseskript: zeigt alle Daten einer aufgelegten Karte in Thonny an |
 | `i2c_lcd.py` | Treiber fuer das 16x2-I2C-LCD (PCF8574-Backpack) |

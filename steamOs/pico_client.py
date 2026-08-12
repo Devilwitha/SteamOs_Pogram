@@ -13,6 +13,12 @@ Kennt SteamOS die IP des Pico nicht (config.json -> pico_ip leer oder
 Verbindung verloren), wird sie per UDP-Broadcast automatisch im lokalen
 Netzwerk gesucht. Die eigentliche Netzwerklogik steckt in pico_link.py,
 das sich auch die GUI (gui/gui_server.py) teilt.
+
+Zusaetzlich wird bei jedem Durchlauf per update_led() die Farbe des
+gerade aufliegenden Tags (bzw. des damit verknuepften Spiels) ermittelt
+und an einen optionalen zweiten Pico weitergereicht (siehe ../Led_Pico),
+der damit einen LED-Streifen ansteuert - unabhaengig vom Spielstart,
+komplett eigenstaendiges Geraet (led_config.json/led_link.py).
 """
 import shlex
 import sqlite3
@@ -21,9 +27,17 @@ import sys
 import time
 from pathlib import Path
 
+import led_link
 import pico_link
 
 GAMES_DB_PATH = Path(__file__).resolve().parent / "games.db"
+
+# Zuletzt an den Led_Pico gesendete Farbe (siehe update_led()) - eigenes
+# Sentinel-Objekt statt None, da None selbst ein gueltiger Zustand ist
+# (kein Tag/keine Farbe -> Streifen aus).
+_UNSET = object()
+_last_led_color = _UNSET
+_led_pico_ip = None
 
 
 def _resolve_steam_executable():
@@ -95,6 +109,57 @@ def handle_tag(pico_ip, tcp_port, timestamp):
         print(f"[{timestamp}] Konnte Start nicht an Pico bestaetigen (Tag ggf. gewechselt).", flush=True)
 
 
+def resolve_led_color(current):
+    """Ermittelt die fuer den Led_Pico anzuzeigende Farbe aus dem
+    aktuellen Tag-Status (siehe pico_link.fetch_current): eine direkt am
+    Tag gesetzte Farbe hat Vorrang vor der Farbe des verknuepften Spiels.
+    Gibt None zurueck, wenn kein Tag aufliegt bzw. weder Tag noch Spiel
+    eine Farbe haben (Streifen soll dann aus sein)."""
+    if not current:
+        return None
+    if current.get("color"):
+        return current["color"]
+    game_uid = current.get("game_uid")
+    if game_uid:
+        game = find_game_by_uid(game_uid)
+        if game is not None:
+            return game["color"]
+    return None
+
+
+def update_led(pico_ip, tcp_port):
+    """Haelt den Led_Pico auf dem Laufenden: fragt beim RFID-Pico per
+    CURRENT? den gerade aufliegenden Tag ab (unabhaengig vom einmaligen
+    TAG?-Meldezustand, der nur fuer den Spielstart gedacht ist) und
+    schickt die daraus ermittelte Farbe weiter - aber nur, wenn sie sich
+    seit dem letzten Durchlauf geaendert hat, um nicht bei jedem Takt
+    unnoetig Netzwerkverkehr zum Led_Pico zu erzeugen. Ist kein Led_Pico
+    im Netzwerk konfiguriert/erreichbar, wird das stillschweigend
+    uebersprungen - er ist optional."""
+    global _last_led_color, _led_pico_ip
+
+    current = pico_link.fetch_current(pico_ip, tcp_port)
+    color = resolve_led_color(current)
+    if color == _last_led_color:
+        return
+
+    led_config = led_link.load_config()
+    led_tcp_port = led_config.get("tcp_port", 5007)
+    led_udp_port = led_config.get("udp_port", 5008)
+    led_ip = led_config.get("led_pico_ip") or _led_pico_ip or led_link.discover_led_pico(led_udp_port)
+    if not led_ip:
+        return
+
+    ok = led_link.set_color(led_ip, led_tcp_port, color) if color else led_link.turn_off(led_ip, led_tcp_port)
+    if ok:
+        _led_pico_ip = led_ip
+        _last_led_color = color
+    else:
+        # IP war offenbar nicht (mehr) erreichbar - naechstes Mal neu
+        # ermitteln statt dauerhaft gegen eine tote IP zu senden.
+        _led_pico_ip = None
+
+
 def main():
     config = pico_link.load_config()
     interval = config.get("interval_seconds", 3)
@@ -122,6 +187,7 @@ def main():
                 print(f"[{timestamp}] Pico erreichbar ({pico_ip})", flush=True)
                 pico_link.write_state("erreichbar", pico_ip)
                 handle_tag(pico_ip, tcp_port, timestamp)
+                update_led(pico_ip, tcp_port)
             else:
                 print(f"[{timestamp}] Pico NICHT erreichbar, versuche erneut...", flush=True)
                 pico_link.write_state("nicht_erreichbar", pico_ip)

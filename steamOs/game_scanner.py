@@ -112,9 +112,16 @@ def ensure_db(conn):
             installed INTEGER NOT NULL DEFAULT 0,
             install_path TEXT,
             launch_command TEXT,
+            color TEXT,
             last_scanned TEXT NOT NULL
         )
     """)
+    # Migration fuer vor der Farbzuweisung angelegte games.db-Dateien, die
+    # die Spalte 'color' noch nicht haben (CREATE TABLE IF NOT EXISTS
+    # aendert ein bestehendes Schema nicht).
+    existing_cols = {row[1] for row in conn.execute("PRAGMA table_info(games)")}
+    if "color" not in existing_cols:
+        conn.execute("ALTER TABLE games ADD COLUMN color TEXT")
     conn.commit()
 
 

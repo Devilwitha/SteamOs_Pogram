@@ -1,22 +1,30 @@
 # SteamOs_Pogram
 
-Zwei zusammengehoerige Programme, die einen Raspberry Pi Pico W (mit
-RFID-Leser RC522) ueberwachen und steuern - und zwar auch dann, wenn das
-Steam Deck im Game Mode laeuft.
+Programme, die bis zu zwei Raspberry Pi Pico W ueberwachen und steuern -
+und zwar auch dann, wenn das Steam Deck im Game Mode laeuft: einen mit
+RFID-Leser (RC522) zur Spielerkennung, und optional einen zweiten mit
+LED-Streifen, der das erkannte Spiel/den Tag farblich anzeigt.
 
 - **[steamOs/](steamOs)** - laeuft als Hintergrunddienst (systemd --user) auf
   SteamOS. Sendet alle 3 Sekunden eine Anfrage an den Pico, liest die
   installierten Steam-Spiele in eine SQLite-Datenbank ein, bietet in
-  [`steamOs/gui/`](steamOs/gui) eine Weboberflaeche zur Spielauswahl sowie
-  zur Verwaltung der vom Pico bekannten RFID-Tags, und startet automatisch
-  das Spiel, dessen Tag am Pico erkannt wird.
+  [`steamOs/gui/`](steamOs/gui) eine Weboberflaeche zur Spielauswahl,
+  zur Verwaltung der vom Pico bekannten RFID-Tags sowie zur Zuweisung
+  einer Farbe pro Spiel/Tag, startet automatisch das Spiel, dessen Tag am
+  Pico erkannt wird, und reicht die passende Farbe an den optionalen
+  Led_Pico weiter.
 - **[Pico/](Pico)** - MicroPython-Programm fuer einen Raspberry Pi Pico W.
   Verbindet sich mit dem gespeicherten WLAN (bis zu 3 Versuche); klappt das
   nicht, oeffnet der Pico einen eigenen Access Point mit einer Webseite zur
   WLAN-Einrichtung. Hostet im Normalbetrieb zusaetzlich eine dunkle,
   moderne Statuswebseite und steuert einen RC522-RFID-Leser: liest laufend
   aufliegende Tags, speichert jeden neu erkannten Tag und verknuepft ihn -
-  in beide Richtungen - mit einer Spiel-UID.
+  in beide Richtungen - mit einer Spiel-UID sowie optional einer eigenen
+  Farbe.
+- **[Led_Pico/](Led_Pico)** - MicroPython-Programm fuer einen **zweiten,
+  eigenstaendigen** Raspberry Pi Pico W mit WS2812/NeoPixel-LED-Streifen.
+  Optional: laeuft unabhaengig vom RFID-Pico und zeigt per LED-Streifen
+  die Farbe des aktuell erkannten Spiels bzw. Tags an.
 - **[windows/](windows)** - duenne Windows-Einstiegspunkte fuer denselben
   `steamOs/`-Code, nur zum lokalen Testen/Entwickeln auf einem
   Windows-PC ohne Steam Deck oder Pico-Hardware (siehe dortige README).
@@ -32,14 +40,20 @@ Steam Deck im Game Mode laeuft.
 3. **Spiel mit einem Tag verknuepfen:** `python3 steamOs/gui/gui_server.py`
    starten, entweder ein Spiel auswaehlen und danach einen Tag an den RC522
    halten, oder einen bereits erkannten Tag direkt aus der Tag-Liste einem
-   Spiel zuweisen.
+   Spiel zuweisen. In derselben GUI laesst sich optional auch eine Farbe
+   pro Spiel/Tag zuweisen (fuer Schritt 6).
 4. **Spiel starten:** Tag an den RC522 halten - SteamOS startet automatisch
    das zugehoerige Spiel.
 5. Beide Geraete muessen sich im selben lokalen Netzwerk befinden. Die
    Pico-IP wird von SteamOS automatisch per UDP-Broadcast gefunden - eine
    manuelle Eintragung in `steamOs/config.json` ist nur noetig, falls
    Broadcasts im Netzwerk blockiert sind.
-6. Statusseite des Pico im Browser: `http://<pico-ip>/` (nur im normalen
+6. **(Optional) Led_Pico vorbereiten:** Siehe [Led_Pico/README.md](Led_Pico/README.md).
+   Ein zweiter, eigener Pico W mit LED-Streifen; Einrichtung analog zu
+   Schritt 1 (eigener Access Point `LedPico-Setup`). Zeigt danach
+   automatisch die in Schritt 3 zugewiesene Farbe des erkannten Spiels/
+   Tags an - `steamOs/led_config.json` funktioniert wie `config.json`.
+7. Statusseite des Pico im Browser: `http://<pico-ip>/` (nur im normalen
    WLAN-Betrieb erreichbar).
 
 ## Protokoll zwischen SteamOS und Pico
@@ -60,4 +74,21 @@ Steam Deck im Game Mode laeuft.
 | Pico -> SteamOS | TCP 5005 | `TAGS:<json>` | Liste `[{"uid":..., "game_uid":...}, ...]` |
 | SteamOS -> Pico | TCP 5005 | `LINK:<uid>:<spiel-uid>` | Verknuepft einen bekannten Tag direkt mit einem Spiel (leer = trennen) |
 | Pico -> SteamOS | TCP 5005 | `OK:LINK:<uid>` / `ERROR:unknown_tag` | Bestaetigung bzw. Fehler |
+| SteamOS -> Pico | TCP 5005 | `TAGCOLOR:<uid>:<farbe>` | Setzt (leer = loescht) die eigene Farbe eines bekannten Tags |
+| Pico -> SteamOS | TCP 5005 | `OK:TAGCOLOR:<uid>` / `ERROR:unknown_tag` | Bestaetigung bzw. Fehler |
+| SteamOS -> Pico | TCP 5005 | `CURRENT?` | Fragt den gerade aufliegenden Tag ab (nicht einmalig wie `TAG?`) |
+| Pico -> SteamOS | TCP 5005 | `CURRENT:<json>` / `CURRENT:NONE` | `{"uid":..., "game_uid":..., "color":...}`, oder nichts aufliegend - Grundlage fuer die Led_Pico-Farbe |
 | Browser -> Pico | HTTP 80 | `GET /` bzw. `/status.json` | Statuswebseite / -daten (nur im Normalbetrieb) |
+
+## Protokoll zwischen SteamOS und dem optionalen Led_Pico
+
+| Richtung | Port | Nachricht | Zweck |
+|---|---|---|---|
+| SteamOS -> Led_Pico | UDP 5008 | `DISCOVER_LED_PICO` | Led_Pico im Netzwerk finden |
+| Led_Pico -> SteamOS | UDP 5008 | `LEDPICO:<ip>` | Antwort mit eigener IP |
+| SteamOS -> Led_Pico | TCP 5007 | `PING` | Erreichbarkeits-Check |
+| Led_Pico -> SteamOS | TCP 5007 | `erreichbar` | Bestaetigung |
+| SteamOS -> Led_Pico | TCP 5007 | `COLOR:<hex>` | Setzt den LED-Streifen auf diese Farbe |
+| Led_Pico -> SteamOS | TCP 5007 | `OK:COLOR:<hex>` / `ERROR:bad_color` | Bestaetigung bzw. Fehler |
+| SteamOS -> Led_Pico | TCP 5007 | `OFF` | Schaltet den LED-Streifen aus |
+| Led_Pico -> SteamOS | TCP 5007 | `OK:OFF` | Bestaetigung |

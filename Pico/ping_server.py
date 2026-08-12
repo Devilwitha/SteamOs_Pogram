@@ -25,10 +25,21 @@ Zeilenbasiertes Protokoll ueber TCP (Port 5005):
                           gewechselt hat
     TAGS?             -> "TAGS:<json-liste>" aller bisher erkannten Tags
                           mit ihrer (ggf. fehlenden) Spiel-Verknuepfung
+                          und eigenen Farbe
     LINK:<uid>:<game>  -> verknuepft einen bereits bekannten Tag direkt
                           (ohne erneutes Auflegen) mit einer Spiel-UID
                           (game leer = Verknuepfung aufheben); Antwort
                           "OK:LINK:<uid>" oder "ERROR:unknown_tag"
+    TAGCOLOR:<uid>:<f> -> setzt die eigene LED-Farbe eines bereits
+                          bekannten Tags (f leer = Farbe loeschen);
+                          Antwort "OK:TAGCOLOR:<uid>" oder
+                          "ERROR:unknown_tag"
+    CURRENT?          -> "CURRENT:<json>" mit dem gerade aufliegenden Tag
+                          (uid/game_uid/color), unabhaengig vom
+                          einmaligen TAG?-Meldezustand - oder
+                          "CURRENT:NONE"; genutzt, um den Led_Pico
+                          kontinuierlich mit der passenden Farbe zu
+                          versorgen (siehe ../Led_Pico)
 
 HTTP (Port 80): "/" liefert die Statusseite (dark/modern), "/status.json"
 den aktuellen Status inkl. Tag-Liste als JSON.
@@ -101,6 +112,21 @@ def _handle_command(command):
         if tag_manager.link_existing(uid_hex, game_uid):
             return "OK:LINK:" + uid_hex
         return "ERROR:unknown_tag"
+
+    if command.startswith("TAGCOLOR:"):
+        rest = command[len("TAGCOLOR:"):]
+        if ":" not in rest:
+            return "ERROR:bad_format"
+        uid_hex, color = rest.split(":", 1)
+        uid_hex = uid_hex.strip()
+        color = color.strip()
+        if tag_manager.set_color(uid_hex, color):
+            return "OK:TAGCOLOR:" + uid_hex
+        return "ERROR:unknown_tag"
+
+    if command == "CURRENT?":
+        current = tag_manager.get_current()
+        return "CURRENT:" + json.dumps(current) if current else "CURRENT:NONE"
 
     return "ERROR:unknown_command"
 

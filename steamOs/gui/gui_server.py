@@ -13,6 +13,12 @@ direkt mit einem Spiel verknuepft oder wieder getrennt werden, ohne sie
 erneut an den Leser zu halten (zweite Richtung neben "Spiel waehlen,
 dann Tag scannen").
 
+Sowohl Spielen als auch Tags laesst sich hier zusaetzlich eine eigene
+Farbe zuweisen (Farbfeld je Zeile, speichert bei Aenderung sofort). Eine
+Tag-Farbe hat Vorrang vor der Farbe des verknuepften Spiels. Beide werden
+von steamOs/pico_client.py an einen optionalen zweiten Pico (siehe
+../../Led_Pico) weitergereicht, der damit einen LED-Streifen ansteuert.
+
 Nutzt nur die Python-Standardbibliothek (kein Tkinter/Qt noetig), damit es
 ohne zusaetzliche Pakete auf SteamOS laeuft (schreibgeschuetztes
 Root-Dateisystem).
@@ -33,6 +39,7 @@ GUI_DIR = Path(__file__).resolve().parent
 STEAMOS_DIR = GUI_DIR.parent
 sys.path.insert(0, str(STEAMOS_DIR))
 
+import game_scanner  # noqa: E402
 import pico_link  # noqa: E402
 
 DB_PATH = STEAMOS_DIR / "games.db"
@@ -58,10 +65,21 @@ def fetch_games():
         return []
     conn = sqlite3.connect(DB_PATH)
     try:
+        game_scanner.ensure_db(conn)
         conn.row_factory = sqlite3.Row
         return conn.execute(
-            "SELECT uid, name, installed FROM games ORDER BY name COLLATE NOCASE"
+            "SELECT uid, name, installed, color FROM games ORDER BY name COLLATE NOCASE"
         ).fetchall()
+    finally:
+        conn.close()
+
+
+def set_game_color(uid, color):
+    conn = sqlite3.connect(DB_PATH)
+    try:
+        game_scanner.ensure_db(conn)
+        conn.execute("UPDATE games SET color = ? WHERE uid = ?", (color or None, uid))
+        conn.commit()
     finally:
         conn.close()
 
@@ -74,18 +92,25 @@ def _resolve_pico_ip(config):
 def _render_game_rows(games):
     if not games:
         return (
-            "<tr><td colspan='4'>Keine Spiele gefunden. "
+            "<tr><td colspan='5'>Keine Spiele gefunden. "
             "Erst <code>python3 ../game_scanner.py</code> ausfuehren.</td></tr>"
         )
 
     rows = []
     for game in games:
         badge = "installiert" if game["installed"] else "nicht installiert"
+        color = game["color"] or "#1a9fff"
         rows.append(
             "<tr>"
             f"<td>{_escape(game['name'])}</td>"
             f"<td class='badge'>{badge}</td>"
             f"<td class='uid'>{game['uid']}</td>"
+            "<td>"
+            "<form method='POST' action='/set_game_color' class='inline-form'>"
+            f"<input type='hidden' name='uid' value='{game['uid']}'>"
+            f"<input type='color' name='color' value='{color}' onchange='this.form.submit()'>"
+            "</form>"
+            "</td>"
             "<td>"
             "<form method='POST' action='/send' class='inline-form'>"
             f"<input type='hidden' name='uid' value='{game['uid']}'>"
@@ -99,9 +124,9 @@ def _render_game_rows(games):
 
 def _render_tag_rows(tags, games):
     if tags is None:
-        return "<tr><td colspan='4'>Pico nicht erreichbar - Tag-Liste kann nicht geladen werden.</td></tr>"
+        return "<tr><td colspan='5'>Pico nicht erreichbar - Tag-Liste kann nicht geladen werden.</td></tr>"
     if not tags:
-        return "<tr><td colspan='4'>Noch keine Tags erkannt. Einen Tag an den RC522 halten.</td></tr>"
+        return "<tr><td colspan='5'>Noch keine Tags erkannt. Einen Tag an den RC522 halten.</td></tr>"
 
     game_names = {g["uid"]: g["name"] for g in games}
 
@@ -109,6 +134,7 @@ def _render_tag_rows(tags, games):
     for tag in tags:
         uid = tag.get("uid", "")
         game_uid = tag.get("game_uid")
+        color = tag.get("color") or "#1a9fff"
 
         options = ["<option value=''>Spiel waehlen ...</option>"]
         for g in games:
@@ -131,6 +157,12 @@ def _render_tag_rows(tags, games):
             "<tr>"
             f"<td class='uid'>{uid}</td>"
             f"<td>{status_html}</td>"
+            "<td>"
+            "<form method='POST' action='/set_tag_color' class='inline-form'>"
+            f"<input type='hidden' name='uid' value='{uid}'>"
+            f"<input type='color' name='color' value='{color}' onchange='this.form.submit()'>"
+            "</form>"
+            "</td>"
             "<td>"
             "<form method='POST' action='/link_tag' class='inline-form'>"
             f"<input type='hidden' name='uid' value='{uid}'>"
@@ -174,6 +206,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
             "/send": self._handle_send,
             "/link_tag": self._handle_link_tag,
             "/unlink_tag": self._handle_unlink_tag,
+            "/set_game_color": self._handle_set_game_color,
+            "/set_tag_color": self._handle_set_tag_color,
         }
         handler = routes.get(self.path)
         if handler is None:
@@ -220,6 +254,30 @@ class Handler(http.server.BaseHTTPRequestHandler):
         if not uid:
             return "<div class='message error'>Keine Tag-UID angegeben.</div>"
         return self._link(uid, "", "getrennt")
+
+    def _handle_set_game_color(self, form):
+        uid = form.get("uid", [""])[0]
+        color = form.get("color", [""])[0]
+        if not uid:
+            return "<div class='message error'>Keine Spiel-UID angegeben.</div>"
+        set_game_color(uid, color)
+        return "<div class='message success'>Farbe fuer Spiel gespeichert.</div>"
+
+    def _handle_set_tag_color(self, form):
+        uid = form.get("uid", [""])[0]
+        color = form.get("color", [""])[0]
+        if not uid:
+            return "<div class='message error'>Keine Tag-UID angegeben.</div>"
+
+        config = pico_link.load_config()
+        tcp_port = config.get("tcp_port", 5005)
+        pico_ip = _resolve_pico_ip(config)
+        if not pico_ip:
+            return "<div class='message error'>Pico wurde im Netzwerk nicht gefunden.</div>"
+
+        if pico_link.set_tag_color(pico_ip, tcp_port, uid, color):
+            return f"<div class='message success'>Farbe fuer Tag {_escape(uid)} gespeichert.</div>"
+        return f"<div class='message error'>Farbe fuer Tag {_escape(uid)} konnte nicht gespeichert werden (unbekannter Tag?).</div>"
 
     def _link(self, uid, game_uid, aktion):
         config = pico_link.load_config()

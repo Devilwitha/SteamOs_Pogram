@@ -1,7 +1,11 @@
 """Persistenter Speicher fuer erkannte RFID-Tags: physische Tag-UID (Hex-
-String) -> optional verknuepfte Spiel-UID. Wird sowohl vom Hintergrund-
-Polling (tag_manager.py) als auch vom Status-Server und dem TCP-Protokoll
-(TAGS?/LINK) genutzt.
+String) -> optional verknuepfte Spiel-UID sowie optionale eigene Farbe.
+Wird sowohl vom Hintergrund-Polling (tag_manager.py) als auch vom
+Status-Server und dem TCP-Protokoll (TAGS?/LINK/TAGCOLOR/CURRENT?) genutzt.
+
+Die Farbe (Hex-String wie '#ff8800') wird unabhaengig von der Spiel-
+Verknuepfung gespeichert: ist sie gesetzt, hat sie beim Led_Pico Vorrang
+vor der Farbe des verknuepften Spiels (siehe steamOs/pico_client.py).
 
 Bewusst KEINE Daten mehr auf den Tag selbst geschrieben (frueherer Ansatz):
 so funktioniert das auch mit Tags, die sich nicht beschreiben lassen bzw.
@@ -12,7 +16,7 @@ import ujson as json
 
 DATEI = "tags.json"
 
-_tags = None  # {"<uid_hex>": {"game_uid": str|None}}
+_tags = None  # {"<uid_hex>": {"game_uid": str|None, "color": str|None}}
 
 
 def _laden():
@@ -45,7 +49,7 @@ def upsert_seen(uid_hex):
     _laden()
     if uid_hex in _tags:
         return False
-    _tags[uid_hex] = {"game_uid": None}
+    _tags[uid_hex] = {"game_uid": None, "color": None}
     _speichern()
     return True
 
@@ -60,6 +64,23 @@ def link(uid_hex, game_uid):
     _speichern()
 
 
+def set_color(uid_hex, color):
+    """Setzt (oder loescht, falls color leer ist) die eigene LED-Farbe
+    eines Tags. Gibt False zurueck, wenn dieser Tag noch nie gesehen
+    wurde."""
+    _laden()
+    if uid_hex not in _tags:
+        return False
+    entry = _tags[uid_hex]
+    entry["color"] = color or None
+    _tags[uid_hex] = entry
+    _speichern()
+    return True
+
+
 def to_list():
     _laden()
-    return [{"uid": uid, "game_uid": daten.get("game_uid")} for uid, daten in _tags.items()]
+    return [
+        {"uid": uid, "game_uid": daten.get("game_uid"), "color": daten.get("color")}
+        for uid, daten in _tags.items()
+    ]
