@@ -3,6 +3,6 @@
   "tcp_port": 5005,
   "udp_port": 5006,
   "interval_seconds": 3,
-  "gui_bind": "127.0.0.1",
-  "remote_control_token": ""
+  "gui_bind": "0.0.0.0",
+  "remote_control_token": "E6Ze6aFqhTNbnXQhJJf7gW0sA6xQb9tL"
 }
