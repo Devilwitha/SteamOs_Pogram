@@ -58,6 +58,7 @@ _pending_write_name = None
 _pending_forget = False
 _current_uid_hex = None
 _current_game_uid = None
+_sent_uid = None
 _reported_uid = None
 _last_seen_ms = 0
 
@@ -104,7 +105,7 @@ def link_existing(uid_hex, game_uid, game_name=None):
     """Verknuepft (game_uid gesetzt) oder loest (game_uid leer) einen
     bereits bekannten Tag, ohne dass er erneut aufgelegt werden muss.
     Gibt False zurueck, wenn dieser Tag noch nie gesehen wurde."""
-    global _current_game_uid, _reported_uid
+    global _current_game_uid, _sent_uid, _reported_uid
 
     if tag_store.get(uid_hex) is None:
         return False
@@ -114,6 +115,7 @@ def link_existing(uid_hex, game_uid, game_name=None):
     _lock.acquire()
     if _current_uid_hex == uid_hex:
         _current_game_uid = game_uid or None
+        _sent_uid = None
         _reported_uid = None
     _lock.release()
     return True
@@ -121,30 +123,52 @@ def link_existing(uid_hex, game_uid, game_name=None):
 
 def get_tag_status():
     """Liefert die zu meldende Spiel-UID, oder None, wenn nichts Neues
-    gemeldet werden muss."""
+    gemeldet werden muss. Merkt sich dabei zugleich (fuers LCD/Status,
+    siehe _status_locked()), dass diese UID per TAG? an SteamOS
+    uebermittelt wurde."""
+    global _sent_uid
     _lock.acquire()
     try:
         if _current_game_uid is not None and _current_game_uid != _reported_uid:
+            _sent_uid = _current_game_uid
             return _current_game_uid
         return None
     finally:
         _lock.release()
 
 
+def _status_locked(game_uid):
+    """Meldezustand des uebergebenen Spiel-UID gegenueber SteamOS, fuers
+    LCD und den Status-Server. Muss unter _lock aufgerufen werden.
+    "erkannt": Tag liegt auf und ist verknuepft, aber SteamOS hat noch
+        nicht per TAG? danach gefragt.
+    "gesendet": TAG? hat diese UID bereits an SteamOS gemeldet, aber
+        STARTED:<uid> steht noch aus.
+    "gestartet": SteamOS hat den Spielstart per STARTED:<uid> bestaetigt."""
+    if game_uid is None:
+        return None
+    if game_uid == _reported_uid:
+        return "gestartet"
+    if game_uid == _sent_uid:
+        return "gesendet"
+    return "erkannt"
+
+
 def get_current():
     """Fuer den Status-Server und CURRENT? (siehe ping_server.py): aktuell
-    aufliegender Tag (UID, verknuepfte Spiel-UID sowie eigene Farbe,
-    jeweils falls vorhanden), oder None wenn keine Karte aufliegt. Die
-    Farbe wird bewusst nicht im Debounce-Zustand gecacht, sondern bei
-    jedem Aufruf frisch aus tag_store gelesen, damit eine per TAGCOLOR
-    geaenderte Farbe sofort wirkt, ohne dass der Tag neu aufgelegt werden
-    muss."""
+    aufliegender Tag (UID, verknuepfte Spiel-UID, Meldezustand gegenueber
+    SteamOS sowie eigene Farbe, jeweils falls vorhanden), oder None wenn
+    keine Karte aufliegt. Die Farbe wird bewusst nicht im Debounce-Zustand
+    gecacht, sondern bei jedem Aufruf frisch aus tag_store gelesen, damit
+    eine per TAGCOLOR geaenderte Farbe sofort wirkt, ohne dass der Tag neu
+    aufgelegt werden muss."""
     _lock.acquire()
     try:
         if _current_uid_hex is None:
             return None
         uid_hex = _current_uid_hex
         game_uid = _current_game_uid
+        status = _status_locked(game_uid)
     finally:
         _lock.release()
 
@@ -154,6 +178,7 @@ def get_current():
         "game_uid": game_uid,
         "game_name": entry.get("game_name"),
         "color": entry.get("color"),
+        "status": status,
     }
 
 
@@ -180,7 +205,7 @@ def poll_once():
     """Fuehrt einen einzelnen Lesezyklus aus. Ohne initialisierten
     RFID-Leser (kein RC522 angeschlossen bzw. init() fehlgeschlagen) ein
     No-Op."""
-    global _pending_write_uid, _pending_write_name, _pending_forget, _current_uid_hex, _current_game_uid, _reported_uid, _last_seen_ms
+    global _pending_write_uid, _pending_write_name, _pending_forget, _current_uid_hex, _current_game_uid, _sent_uid, _reported_uid, _last_seen_ms
 
     if _station is None:
         return
@@ -196,6 +221,7 @@ def poll_once():
         if _current_uid_hex is not None and time.ticks_diff(time.ticks_ms(), _last_seen_ms) >= TAG_GRACE_MS:
             _current_uid_hex = None
             _current_game_uid = None
+            _sent_uid = None
             _reported_uid = None
         _lock.release()
         return
@@ -218,6 +244,7 @@ def poll_once():
         _pending_forget = False
         _current_uid_hex = None
         _current_game_uid = None
+        _sent_uid = None
         _reported_uid = None
         _lock.release()
         return
@@ -244,6 +271,7 @@ def poll_once():
 
     _lock.acquire()
     if uid_hex != _current_uid_hex:
+        _sent_uid = None
         _reported_uid = None
     _current_uid_hex = uid_hex
     _current_game_uid = game_uid

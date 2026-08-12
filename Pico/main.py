@@ -8,7 +8,10 @@ Ablauf:
    angeschlossen, zeigt es den Verbindungsstatus an (siehe _init_lcd/
    _lcd_show unten) - ohne LCD wird dieser Teil automatisch uebersprungen.
 2. Bei Erfolg: starte den RFID-Tag-Manager sowie den Ping-/Steuer-/
-   Discovery-Server fuer SteamOS.
+   Discovery-Server fuer SteamOS. Sind die beiden optionalen Status-LEDs
+   angeschlossen (siehe _init_status_leds/README), zeigen sie ab hier
+   laufend rot ("System bereit", kein Tag aufgelegt) bzw. gruen ("Tag
+   erkannt") an - ohne sie wird dieser Teil automatisch uebersprungen.
 3. Bei Misserfolg: wlan.py oeffnet automatisch einen Access Point;
    speichere neue Zugangsdaten ueber die Einrichtungsseite und starte
    danach neu. Wird laenger als HOTSPOT_TIMEOUT_SEK niemand aktiv, startet
@@ -31,6 +34,27 @@ LCD_SDA_PIN = 0
 LCD_SCL_PIN = 1
 LCD_ADDR = 0x27
 IP_ANZEIGE_SEK = 5
+
+LED_ROT_PIN = 7
+LED_GRUEN_PIN = 8
+
+
+def _init_status_leds():
+    """Initialisiert die beiden optionalen Status-LEDs (rot an LED_ROT_PIN,
+    gruen an LED_GRUEN_PIN, siehe README fuer die Verkabelung). Rot zeigt
+    "System bereit, kein Tag aufgelegt", gruen "Tag erkannt" - aktuell
+    gehalten von ping_server._background_loop. Schlaegt die
+    Initialisierung fehl (z. B. Pin belegt), laeuft der Rest des Programms
+    unveraendert ohne LED-Anzeige weiter."""
+    try:
+        rot = machine.Pin(LED_ROT_PIN, machine.Pin.OUT)
+        gruen = machine.Pin(LED_GRUEN_PIN, machine.Pin.OUT)
+        rot.value(0)
+        gruen.value(0)
+        return rot, gruen
+    except Exception as e:
+        print("Status-LEDs nicht verfuegbar:", e)
+        return None, None
 
 
 def _init_lcd():
@@ -82,6 +106,7 @@ def main():
     led = machine.Pin("LED", machine.Pin.OUT)
     wlan.LED = led
 
+    led_rot, led_gruen = _init_status_leds()
     lcd = _init_lcd()
     _lcd_show(lcd, "WLAN verbinden", "...")
 
@@ -119,10 +144,10 @@ def main():
         print("RFID-Leser (RC522) konnte nicht initialisiert werden:", e)
 
     # Ab hier uebernimmt ping_server._background_loop die LCD-Anzeige und
-    # zeigt laufend den aktuell aufliegenden Tag (verknuepftes Spiel bzw.
-    # "Unbekannter Tag") oder bei leerem Leser wieder diesen
-    # Bereitschafts-Bildschirm an.
-    ping_server.start(my_ip, HOSTNAME, lcd)
+    # die Status-LEDs und zeigt laufend den aktuell aufliegenden Tag
+    # (verknuepftes Spiel bzw. "Unbekannter Tag") oder bei leerem Leser
+    # wieder diesen Bereitschafts-Bildschirm an.
+    ping_server.start(my_ip, HOSTNAME, lcd, led_rot, led_gruen)
 
 
 main()

@@ -5,6 +5,7 @@ Start: python cover_maker.py
 Benoetigt: Pillow (pip install pillow)
 """
 
+import filecmp
 import json
 import sqlite3
 import subprocess
@@ -65,6 +66,42 @@ _FONT_CACHE = {}
 
 def cm_to_px(cm: float, dpi: int) -> int:
     return max(1, round(cm / 2.54 * dpi))
+
+
+def _localize_asset(src_path, dest_dir: Path):
+    """Kopiert eine referenzierte Datei (Panel-/Banner-/Logo-Bild) nach
+    dest_dir, falls sie nicht schon dort liegt, und gibt den neuen,
+    lokalen Pfad zurueck. Bei einem Namenskonflikt mit einer anderen
+    (inhaltlich abweichenden) Datei wird ein Zaehler an den Dateinamen
+    angehaengt. Fehlt die Quelldatei, wird der urspruengliche Pfad
+    unveraendert zurueckgegeben (bestehende Fehlerbehandlung beim
+    Projekt-Laden faengt das dann als "fehlende Datei" ab)."""
+    if not src_path:
+        return src_path
+    src = Path(src_path)
+    if not src.is_file():
+        return src_path
+
+    dest_dir.mkdir(parents=True, exist_ok=True)
+    try:
+        if src.resolve().parent == dest_dir.resolve():
+            return str(src.resolve())
+    except OSError:
+        pass
+
+    dest = dest_dir / src.name
+    if dest.exists() and not filecmp.cmp(src, dest, shallow=False):
+        i = 2
+        while True:
+            candidate = dest_dir / f"{src.stem}_{i}{src.suffix}"
+            if not candidate.exists() or filecmp.cmp(src, candidate, shallow=False):
+                dest = candidate
+                break
+            i += 1
+
+    if not dest.exists():
+        shutil.copyfile(src, dest)
+    return str(dest.resolve())
 
 
 def load_font(bold: bool, size: int):
@@ -1165,6 +1202,18 @@ class CoverMakerApp:
             draw.line([x, y, x, y_end], fill=fill, width=width)
             y += dash_len + gap_len
 
+    def _localize_project_assets(self, cover_dir: Path):
+        """Kopiert Banner-, Panel- und Logo-Bilder in cover_dir und
+        aktualisiert die eigenen Pfad-Referenzen darauf, damit auch
+        spaetere Aktionen (erneutes Speichern, Projekt-Export) die
+        lokalen Kopien statt der urspruenglichen Quelldateien nutzen."""
+        if self.banner_path:
+            self.banner_path = _localize_asset(self.banner_path, cover_dir)
+        for panel in self.panels:
+            if panel.image_path:
+                panel.image_path = _localize_asset(panel.image_path, cover_dir)
+            panel.logo_paths = [_localize_asset(p, cover_dir) for p in panel.logo_paths]
+
     def export_image(self):
         combined = self.build_combined_image()
         path = filedialog.asksaveasfilename(
@@ -1174,6 +1223,17 @@ class CoverMakerApp:
         )
         if not path:
             return
+
+        # Alles, was zu diesem Cover gehoert (PNG, Schneidelinien-Referenz,
+        # Projektdatei und alle darin verwendeten Quellbilder), landet
+        # gemeinsam in einem Unterordner mit dem Namen der PNG-Datei, damit
+        # ein Cover-Projekt immer vollstaendig lokal und in sich
+        # geschlossen bleibt (verschiebbar/kopierbar, ohne Referenzen auf
+        # Dateien ausserhalb des Ordners).
+        chosen = Path(path)
+        cover_dir = chosen.parent / chosen.stem
+        cover_dir.mkdir(parents=True, exist_ok=True)
+        path = str(cover_dir / chosen.name)
 
         dpi = self._dpi()
         try:
@@ -1213,6 +1273,12 @@ class CoverMakerApp:
             info_extra += f"\nSchneide-/Faltlinien-Referenz: {cutline_path.name}"
         except Exception as exc:
             messagebox.showwarning("Hinweis", f"Schneidelinien-Referenzbild konnte nicht gespeichert werden:\n{exc}")
+
+        # Alle im Projekt verwendeten Quellbilder (Panel-Bilder, Banner,
+        # Logos) in den Cover-Ordner kopieren und die eigenen Referenzen
+        # darauf umbiegen, bevor die Projektdatei geschrieben wird - so
+        # zeigt sie nur noch auf lokale Dateien im selben Ordner.
+        self._localize_project_assets(cover_dir)
 
         # Projektdatei speichern, damit das Cover spaeter mit allen
         # Einstellungen (Bilder, Zuschnitt, Rueckseiten-Text, Banner, ...)

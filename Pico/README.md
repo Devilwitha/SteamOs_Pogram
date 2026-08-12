@@ -1,8 +1,8 @@
 # Pico
 
 MicroPython-Programm fuer einen **Raspberry Pi Pico W / Pico 2 W** (WLAN-Chip
-wird benoetigt) mit angeschlossenem **RFID-Leser/Schreiber RC522** und
-optionalem **16x2-I2C-LCD**.
+wird benoetigt) mit angeschlossenem **RFID-Leser/Schreiber RC522**,
+optionalem **16x2-I2C-LCD** sowie optionalen **zwei Status-LEDs** (rot/gruen).
 
 ## Ablauf
 
@@ -20,7 +20,9 @@ optionalem **16x2-I2C-LCD**.
    nuetzlich, falls z. B. ein WLAN-Ausfall nur voruebergehend war.
 3. Ist die Verbindung erfolgreich, zeigt das LCD (falls vorhanden) fuer
    5 Sekunden "WLAN OK" + die IP-Adresse an, danach initialisiert der Pico
-   den RC522 (`tag_manager.py`) und startet:
+   den RC522 (`tag_manager.py`) und startet. Ab hier zeigen auch die
+   beiden optionalen Status-LEDs den Tag-Zustand an (rot = System bereit,
+   kein Tag aufgelegt; gruen = ein Tag liegt auf - siehe unten):
    - **TCP-Steuer-Server (Port 5005):** Zeilenbasiertes Protokoll:
      - `PING` -> Antwort `erreichbar` (periodischer Erreichbarkeits-Check von SteamOS)
      - `SELECT:<uid>[:<name>]` -> merkt die UID (optional mit
@@ -167,6 +169,32 @@ von `tag_manager.init()` in `main.py` bei Bedarf anpassen (Parameter
 Verwendet werden MIFARE-Classic-Tags (z. B. die typischen weissen RC522-Testkarten/-Keyfobs) -
 es wird nur deren physische UID gelesen, siehe RFID-Verhalten oben.
 
+### Status-LEDs rot/gruen (optional, in `main.py`/`ping_server.py`)
+
+Zwei einfache LEDs an freien GPIOs (RC522 belegt GP2-GP6, das optionale
+LCD GP0-GP1) zeigen unabhaengig vom LCD immer den aktuellen Tag-Zustand:
+
+| LED | Pico-GPIO | Pico-Pinnummer (physisch) | Bedeutung |
+|---|---|---|---|
+| Rot (+, ueber Vorwiderstand) | GP7 | Pin 10 | System bereit, aber **kein Tag** aufgelegt |
+| Gruen (+, ueber Vorwiderstand) | GP8 | Pin 11 | **Tag erkannt** (aufliegend, unabhaengig davon, ob mit einem Spiel verknuepft) |
+| Beide (-) | GND | z. B. Pin 3, 8, 13 oder 38 | gemeinsame Masse |
+
+Beide LEDs sind zueinander exklusiv (nie gleichzeitig an) und werden direkt
+vom GPIO getrieben - dazwischen jeweils einen **Vorwiderstand (ca.
+220-330 Ohm)** in Reihe zur LED schalten, sonst droht ein zu hoher Strom
+durch den GPIO-Pin. Waehrend des WLAN-Verbindungsaufbaus bzw. im
+Access-Point-Einrichtungsmodus bleiben beide LEDs aus (dafuer signalisiert
+die eingebaute LED des Pico W den WLAN-Status, siehe `wlan.py`) - erst
+sobald `ping_server.start()` laeuft (siehe Ablauf oben), uebernimmt
+`ping_server._update_status_leds()` die Anzeige und haelt sie direkt nach
+jedem RFID-Lesezyklus aktuell, genau wie beim LCD.
+
+Die Pins lassen sich in `main.py` ueber `LED_ROT_PIN`/`LED_GRUEN_PIN`
+anpassen. Ist die Initialisierung nicht erfolgreich oder werden keine LEDs
+angeschlossen, wird das automatisch erkannt und uebersprungen - der Rest
+des Programms laeuft unveraendert weiter.
+
 ### 16x2-I2C-LCD (optional, `i2c_lcd.py` / `lcd_test.py`)
 
 Fuer ein 16x2-Display mit dem ueblichen PCF8574-I2C-Backpack ("I2C
@@ -207,10 +235,15 @@ Tags:
 |---|---|
 | Keine Karte aufgelegt | `System bereit` / `<IP-Adresse>` |
 | Karte aufgelegt, aber (noch) keinem Spiel zugeordnet | `Unbekannter Tag` / `UID:<hex-uid>` |
-| Karte verknuepft, Spielname bekannt | `<Spielname>` / `Tag erkannt` |
+| Karte verknuepft, Spielname bekannt, SteamOS hat noch nicht per `TAG?` gefragt | `<Spielname>` / `Tag erkannt` |
+| ... SteamOS hat per `TAG?` abgefragt, `STARTED:<uid>` steht noch aus | `<Spielname>` / `An SteamOS...` |
+| ... SteamOS hat den Start per `STARTED:<uid>` bestaetigt | `<Spielname>` / `Spiel gestartet` |
 | Karte verknuepft, aber (noch) kein Name hinterlegt | `Spiel verknuepft` / `UID:<spiel-uid>` |
 
-Der Spielname stammt aus dem optionalen dritten Feld von `SELECT:<uid>:<name>`
+Dieser Meldezustand (`erkannt`/`gesendet`/`gestartet`, siehe
+`tag_manager._status_locked()`) wird auch als `status`-Feld im aktuellen
+Tag von `CURRENT?` und `/status.json` mitgeliefert. Der Spielname stammt
+aus dem optionalen dritten Feld von `SELECT:<uid>:<name>`
 bzw. `LINK:<uid>:<spiel-uid>:<name>` (siehe oben) - die
 [SteamOS-GUI](../steamOs/gui) schickt ihn automatisch mit, wenn ein Spiel
 per "An Pico senden" ausgewaehlt oder ein Tag aus der Tag-Liste heraus
@@ -280,7 +313,8 @@ einen Testtext an.
 - Ist kein RC522 angeschlossen oder schlaegt die Initialisierung fehl, faengt
   `main.py` das ab und startet trotzdem normal weiter (nur ohne RFID-Funktion) -
   WLAN-Verbindung und Erreichbarkeits-Ping funktionieren dann weiterhin.
-  Das Gleiche gilt fuer ein fehlendes/nicht erkanntes LCD.
+  Das Gleiche gilt fuer ein fehlendes/nicht erkanntes LCD sowie fuer
+  fehlende Status-LEDs.
 
 ## Problembehandlung: Statusseite/Setup-Seite bleibt im Browser leer
 

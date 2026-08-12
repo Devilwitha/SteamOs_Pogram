@@ -51,12 +51,21 @@ Zeilenbasiertes Protokoll ueber TCP (Port 5005):
 HTTP (Port 80): "/" liefert die Statusseite (dark/modern), "/status.json"
 den aktuellen Status inkl. Tag-Liste als JSON.
 
+Sind die beiden optionalen Status-LEDs angeschlossen (siehe main.py/README:
+rot/gruen), zeigen sie unabhaengig vom LCD immer den aktuellen Tag-Zustand:
+rot = System bereit, aber kein Tag aufgelegt; gruen = ein Tag liegt auf
+(siehe _update_status_leds).
+
 Ist ein LCD angeschlossen (siehe main.py/i2c_lcd.py), zeigt es laufend den
 aktuellen Tag-Zustand an (aktualisiert im Hintergrund-Thread direkt nach
-jedem tag_manager.poll_once(), siehe _background_loop): verknuepftes Spiel
-(Name falls bekannt, sonst die Spiel-UID), "Unbekannter Tag" bei einer
-noch nicht verknuepften Karte, oder der Bereitschafts-Bildschirm
-("System bereit" + IP), solange keine Karte aufliegt.
+jedem tag_manager.poll_once(), siehe _background_loop): Zeile 1 das
+verknuepfte Spiel (Name falls bekannt, sonst die Spiel-UID), Zeile 2 den
+Meldezustand gegenueber SteamOS - "Tag erkannt" (noch nicht abgefragt),
+"An SteamOS..." (per TAG? gemeldet, Start steht noch aus) oder "Spiel
+gestartet" (per STARTED:<uid> bestaetigt, siehe _STATUS_ZEILE2/
+tag_manager._status_locked()). Bei einer noch nicht verknuepften Karte
+steht dort "Unbekannter Tag", und solange keine Karte aufliegt der
+Bereitschafts-Bildschirm ("System bereit" + IP).
 """
 import socket
 import select
@@ -166,6 +175,16 @@ def _lcd_write(lcd, zeile1, zeile2=""):
         print("LCD-Fehler:", e)
 
 
+# Zeile 2 je Meldezustand (siehe tag_manager._status_locked): zunaechst
+# nur lokal erkannt, dann per TAG? an SteamOS gemeldet, zuletzt per
+# STARTED:<uid> als tatsaechlich gestartet bestaetigt.
+_STATUS_ZEILE2 = {
+    "erkannt": "Tag erkannt",
+    "gesendet": "An SteamOS...",
+    "gestartet": "Spiel gestartet",
+}
+
+
 def _lcd_status_text(current, my_ip):
     """Ermittelt (zeile1, zeile2) fuers LCD aus dem aktuell aufliegenden
     Tag (siehe tag_manager.get_current()). Liegt keine Karte auf, wird
@@ -181,7 +200,8 @@ def _lcd_status_text(current, my_ip):
         return "Unbekannter Tag", "UID:" + (current.get("uid") or "")
 
     if game_name:
-        return game_name, "Tag erkannt"
+        zeile2 = _STATUS_ZEILE2.get(current.get("status"), "Tag erkannt")
+        return game_name, zeile2
 
     return "Spiel verknuepft", "UID:" + game_uid
 
@@ -261,12 +281,25 @@ def _serve(my_ip, hostname):
                 _handle_http_client(cl, my_ip, hostname)
 
 
-def _background_loop(my_ip, lcd=None):
+def _update_status_leds(current, led_rot, led_gruen):
+    """Zwei einfache Status-LEDs (siehe README): rot leuchtet, solange das
+    System bereit ist, aber kein Tag aufliegt; gruen leuchtet, solange ein
+    Tag erkannt ist (unabhaengig davon, ob er mit einem Spiel verknuepft
+    ist). Ohne angeschlossene LED (Parameter None) ein No-Op."""
+    tag_da = current is not None
+    if led_rot is not None:
+        led_rot.value(0 if tag_da else 1)
+    if led_gruen is not None:
+        led_gruen.value(1 if tag_da else 0)
+
+
+def _background_loop(my_ip, lcd=None, led_rot=None, led_gruen=None):
     """Laeuft im einzigen verfuegbaren Hintergrund-Thread: beantwortet
     UDP-Discovery-Anfragen, ruft dazwischen regelmaessig
-    tag_manager.poll_once() auf, aktualisiert danach bei Bedarf das LCD
-    (siehe _lcd_status_text) und prueft von Zeit zu Zeit, ob die
-    WLAN-Verbindung noch steht (siehe WLAN_CHECK_INTERVAL_MS)."""
+    tag_manager.poll_once() auf, aktualisiert danach die Status-LEDs
+    (siehe _update_status_leds) sowie bei Bedarf das LCD (siehe
+    _lcd_status_text) und prueft von Zeit zu Zeit, ob die WLAN-Verbindung
+    noch steht (siehe WLAN_CHECK_INTERVAL_MS)."""
     s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     s.bind(("0.0.0.0", UDP_PORT))
@@ -290,10 +323,17 @@ def _background_loop(my_ip, lcd=None):
             tag_manager.poll_once()
             last_poll = now
 
+            current = tag_manager.get_current()
+            _update_status_leds(current, led_rot, led_gruen)
+
             if lcd is not None:
-                current = tag_manager.get_current()
                 state = (
-                    (current.get("uid"), current.get("game_uid"), current.get("game_name"))
+                    (
+                        current.get("uid"),
+                        current.get("game_uid"),
+                        current.get("game_name"),
+                        current.get("status"),
+                    )
                     if current
                     else None
                 )
@@ -309,10 +349,10 @@ def _background_loop(my_ip, lcd=None):
                 machine.reset()
 
 
-def start(my_ip, hostname="", lcd=None):
+def start(my_ip, hostname="", lcd=None, led_rot=None, led_gruen=None):
     """Startet den kombinierten Discovery-/RFID-Hintergrund-Thread (der bei
-    vorhandenem LCD auch dessen Anzeige aktuell haelt) und danach
-    TCP-Steuer-Server + HTTP-Statusserver (blockierend im aufrufenden
-    Thread)."""
-    _thread.start_new_thread(_background_loop, (my_ip, lcd))
+    vorhandenem LCD/Status-LEDs auch deren Anzeige aktuell haelt) und
+    danach TCP-Steuer-Server + HTTP-Statusserver (blockierend im
+    aufrufenden Thread)."""
+    _thread.start_new_thread(_background_loop, (my_ip, lcd, led_rot, led_gruen))
     _serve(my_ip, hostname)
