@@ -2,7 +2,9 @@
 
 MicroPython-Programm fuer einen **Raspberry Pi Pico W / Pico 2 W** (WLAN-Chip
 wird benoetigt) mit angeschlossenem **RFID-Leser/Schreiber RC522**,
-optionalem **16x2-I2C-LCD** sowie optionalen **zwei Status-LEDs** (rot/gruen).
+optionalem **16x2-I2C-LCD** sowie optionalen **zwei Status-LEDs** (rot/gruen -
+auf demselben Pico wie der RFID-Leser, nicht zu verwechseln mit dem
+separaten [Led_Pico](../Led_Pico) fuer den LED-Streifen).
 
 ## Ablauf
 
@@ -21,8 +23,8 @@ optionalem **16x2-I2C-LCD** sowie optionalen **zwei Status-LEDs** (rot/gruen).
 3. Ist die Verbindung erfolgreich, zeigt das LCD (falls vorhanden) fuer
    5 Sekunden "WLAN OK" + die IP-Adresse an, danach initialisiert der Pico
    den RC522 (`tag_manager.py`) und startet. Ab hier zeigen auch die
-   beiden optionalen Status-LEDs den Tag-Zustand an (rot = System bereit,
-   kein Tag aufgelegt; gruen = ein Tag liegt auf - siehe unten):
+   beiden optionalen Status-LEDs den Tag-Zustand an (gruen = Tag erkannt
+   UND Spielstart von SteamOS bestaetigt; rot = alles andere, siehe unten):
    - **TCP-Steuer-Server (Port 5005):** Zeilenbasiertes Protokoll:
      - `PING` -> Antwort `erreichbar` (periodischer Erreichbarkeits-Check von SteamOS)
      - `SELECT:<uid>[:<name>]` -> merkt die UID (optional mit
@@ -172,12 +174,14 @@ es wird nur deren physische UID gelesen, siehe RFID-Verhalten oben.
 ### Status-LEDs rot/gruen (optional, in `main.py`/`ping_server.py`)
 
 Zwei einfache LEDs an freien GPIOs (RC522 belegt GP2-GP6, das optionale
-LCD GP0-GP1) zeigen unabhaengig vom LCD immer den aktuellen Tag-Zustand:
+LCD GP0-GP1), **auf demselben Pico wie der RFID-Leser** (nicht auf dem
+separaten [Led_Pico](../Led_Pico) fuer den LED-Streifen), zeigen
+unabhaengig vom LCD immer den aktuellen Tag-Zustand:
 
 | LED | Pico-GPIO | Pico-Pinnummer (physisch) | Bedeutung |
 |---|---|---|---|
-| Rot (+, ueber Vorwiderstand) | GP7 | Pin 10 | System bereit, aber **kein Tag** aufgelegt |
-| Gruen (+, ueber Vorwiderstand) | GP8 | Pin 11 | **Tag erkannt** (aufliegend, unabhaengig davon, ob mit einem Spiel verknuepft) |
+| Rot (+, ueber Vorwiderstand) | GP7 | Pin 10 | **Kein Tag** aufgelegt, oder ein Tag liegt auf, aber SteamOS hat den Spielstart noch **nicht** bestaetigt (unverknuepfter Tag, oder `STARTED:<uid>` steht noch aus) |
+| Gruen (+, ueber Vorwiderstand) | GP8 | Pin 11 | Tag liegt auf **und** SteamOS hat den Spielstart per `STARTED:<uid>` bestaetigt (`status == "gestartet"`, siehe `tag_manager._status_locked()`) |
 | Beide (-) | GND | z. B. Pin 3, 8, 13 oder 38 | gemeinsame Masse |
 
 Beide LEDs sind zueinander exklusiv (nie gleichzeitig an) und werden direkt

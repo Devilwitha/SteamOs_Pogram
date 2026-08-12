@@ -53,8 +53,9 @@ den aktuellen Status inkl. Tag-Liste als JSON.
 
 Sind die beiden optionalen Status-LEDs angeschlossen (siehe main.py/README:
 rot/gruen), zeigen sie unabhaengig vom LCD immer den aktuellen Tag-Zustand:
-rot = System bereit, aber kein Tag aufgelegt; gruen = ein Tag liegt auf
-(siehe _update_status_leds).
+gruen = Tag aufliegt UND SteamOS hat den Spielstart per STARTED:<uid>
+bestaetigt; rot = alles andere (kein Tag, unverknuepfter Tag, oder Start
+noch nicht bestaetigt) - siehe _update_status_leds.
 
 Ist ein LCD angeschlossen (siehe main.py/i2c_lcd.py), zeigt es laufend den
 aktuellen Tag-Zustand an (aktualisiert im Hintergrund-Thread direkt nach
@@ -282,15 +283,18 @@ def _serve(my_ip, hostname):
 
 
 def _update_status_leds(current, led_rot, led_gruen):
-    """Zwei einfache Status-LEDs (siehe README): rot leuchtet, solange das
-    System bereit ist, aber kein Tag aufliegt; gruen leuchtet, solange ein
-    Tag erkannt ist (unabhaengig davon, ob er mit einem Spiel verknuepft
-    ist). Ohne angeschlossene LED (Parameter None) ein No-Op."""
-    tag_da = current is not None
+    """Zwei einfache Status-LEDs (siehe README): gruen leuchtet nur, wenn
+    ein Tag aufliegt UND SteamOS den Spielstart bereits per
+    STARTED:<uid> bestaetigt hat (status == "gestartet", siehe
+    tag_manager._status_locked()); in jedem anderen Fall (kein Tag,
+    unbekannter/unverknuepfter Tag, oder Tag noch nicht per TAG?
+    gemeldet bzw. Start noch nicht bestaetigt) leuchtet rot. Ohne
+    angeschlossene LED (Parameter None) ein No-Op."""
+    gestartet = current is not None and current.get("status") == "gestartet"
     if led_rot is not None:
-        led_rot.value(0 if tag_da else 1)
+        led_rot.value(0 if gestartet else 1)
     if led_gruen is not None:
-        led_gruen.value(1 if tag_da else 0)
+        led_gruen.value(1 if gestartet else 0)
 
 
 def _background_loop(my_ip, lcd=None, led_rot=None, led_gruen=None):

@@ -10,8 +10,10 @@ Ablauf:
 2. Bei Erfolg: starte den RFID-Tag-Manager sowie den Ping-/Steuer-/
    Discovery-Server fuer SteamOS. Sind die beiden optionalen Status-LEDs
    angeschlossen (siehe _init_status_leds/README), zeigen sie ab hier
-   laufend rot ("System bereit", kein Tag aufgelegt) bzw. gruen ("Tag
-   erkannt") an - ohne sie wird dieser Teil automatisch uebersprungen.
+   laufend gruen ("Tag erkannt UND Spielstart von SteamOS bestaetigt")
+   bzw. rot (alles andere: kein Tag, unverknuepfter Tag, oder Start noch
+   nicht bestaetigt) an - ohne sie wird dieser Teil automatisch
+   uebersprungen.
 3. Bei Misserfolg: wlan.py oeffnet automatisch einen Access Point;
    speichere neue Zugangsdaten ueber die Einrichtungsseite und starte
    danach neu. Wird laenger als HOTSPOT_TIMEOUT_SEK niemand aktiv, startet
@@ -41,11 +43,12 @@ LED_GRUEN_PIN = 8
 
 def _init_status_leds():
     """Initialisiert die beiden optionalen Status-LEDs (rot an LED_ROT_PIN,
-    gruen an LED_GRUEN_PIN, siehe README fuer die Verkabelung). Rot zeigt
-    "System bereit, kein Tag aufgelegt", gruen "Tag erkannt" - aktuell
-    gehalten von ping_server._background_loop. Schlaegt die
-    Initialisierung fehl (z. B. Pin belegt), laeuft der Rest des Programms
-    unveraendert ohne LED-Anzeige weiter."""
+    gruen an LED_GRUEN_PIN, siehe README fuer die Verkabelung). Gruen
+    zeigt "Tag erkannt UND Spielstart von SteamOS bestaetigt", rot alles
+    andere (kein Tag, unverknuepfter Tag, oder Start noch nicht
+    bestaetigt) - aktuell gehalten von ping_server._background_loop.
+    Schlaegt die Initialisierung fehl (z. B. Pin belegt), laeuft der Rest
+    des Programms unveraendert ohne LED-Anzeige weiter."""
     try:
         rot = machine.Pin(LED_ROT_PIN, machine.Pin.OUT)
         gruen = machine.Pin(LED_GRUEN_PIN, machine.Pin.OUT)
