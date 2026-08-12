@@ -28,6 +28,7 @@ und an einen optionalen zweiten Pico weitergereicht (siehe ../Led_Pico),
 der damit einen LED-Streifen ansteuert - unabhaengig vom Spielstart,
 komplett eigenstaendiges Geraet (led_config.json/led_link.py).
 """
+import csv
 import os
 import shlex
 import signal
@@ -107,22 +108,9 @@ def launch_game(game):
         return None
 
 
-def _find_pids_under_install_path(install_path):
-    """Linux/proc-basierte Suche nach laufenden Prozessen, deren
-    ausfuehrbare Datei oder Kommandozeile unterhalb von install_path
-    liegt. Noetig, weil 'steam -applaunch <appid>' (siehe
-    game_scanner.py) nur den bereits laufenden Steam-Client benachrichtigt
-    und sich selbst i. d. R. sofort wieder beendet - das eigentliche Spiel
-    laeuft als eigener, von Steam gestarteter Prozess. Ohne /proc (z. B.
-    lokale Tests unter Windows) liefert das eine leere Liste; dann bleibt
-    fuer stop_game() nur proc.terminate()."""
+def _find_pids_linux(target):
     proc_dir = Path("/proc")
-    if not install_path or not proc_dir.is_dir():
-        return []
-
-    try:
-        target = str(Path(install_path).resolve())
-    except OSError:
+    if not proc_dir.is_dir():
         return []
 
     pids = []
@@ -143,6 +131,66 @@ def _find_pids_under_install_path(install_path):
         except OSError:
             pass
     return pids
+
+
+def _find_pids_windows(target):
+    """Wie _find_pids_linux, aber ueber WMI (Win32_Process) statt /proc,
+    da Windows kein /proc kennt. Wird per PowerShell abgefragt, um ohne
+    Zusatzpaket (z. B. psutil) auszukommen - reicht, da stop_game() das
+    nur im (seltenen) Beenden-Fall aufruft, nicht bei jedem Poll."""
+    try:
+        result = subprocess.run(
+            [
+                "powershell", "-NoProfile", "-NonInteractive", "-Command",
+                "Get-CimInstance Win32_Process | "
+                "Select-Object ProcessId,ExecutablePath,CommandLine | "
+                "ConvertTo-Csv -NoTypeInformation",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+    except (OSError, subprocess.SubprocessError) as e:
+        print(f"Prozessliste (PowerShell) konnte nicht abgefragt werden: {e}", flush=True)
+        return []
+
+    target_lower = target.lower()
+    pids = []
+    reader = csv.reader(result.stdout.splitlines())
+    next(reader, None)  # Kopfzeile ueberspringen
+    for row in reader:
+        if len(row) < 3:
+            continue
+        pid_str, exe_path, cmdline = row[0], row[1], row[2]
+        if target_lower in exe_path.lower() or target_lower in cmdline.lower():
+            try:
+                pids.append(int(pid_str))
+            except ValueError:
+                pass
+    return pids
+
+
+def _find_pids_under_install_path(install_path):
+    """Sucht laufende Prozesse, deren ausfuehrbare Datei oder
+    Kommandozeile unterhalb von install_path liegt (Linux ueber /proc,
+    Windows ueber WMI/PowerShell - siehe _find_pids_linux/_find_pids_windows).
+    Noetig, weil 'steam -applaunch <appid>' (siehe game_scanner.py) nur den
+    bereits laufenden Steam-Client benachrichtigt und sich selbst i. d. R.
+    sofort wieder beendet - das eigentliche Spiel laeuft als eigener, von
+    Steam gestarteter Prozess. Ohne install_path oder auf einer nicht
+    unterstuetzten Plattform liefert das eine leere Liste; dann bleibt
+    fuer stop_game() nur proc.terminate()."""
+    if not install_path:
+        return []
+
+    try:
+        target = str(Path(install_path).resolve())
+    except OSError:
+        return []
+
+    if sys.platform == "win32":
+        return _find_pids_windows(target)
+    return _find_pids_linux(target)
 
 
 def stop_game(game, proc):
