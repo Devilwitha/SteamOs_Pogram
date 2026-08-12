@@ -121,6 +121,16 @@ input[type=file]{font:inherit;font-size:.76rem;color:var(--dim);max-width:160px}
 .success{border-color:var(--green);color:var(--green)}
 .error{border-color:var(--red);color:var(--red)}
 .hint{color:var(--dim);font-size:.8em;line-height:1.6;margin-top:8px}
+.nav-btn{
+  display:block;text-align:center;text-decoration:none;
+  margin-top:20px;padding:12px 16px;cursor:pointer;
+  font-weight:700;font-size:.78rem;letter-spacing:.06em;text-transform:uppercase;
+  color:#04141a;border:1px solid var(--cyan);
+  background:linear-gradient(180deg,var(--cyan),var(--cyan-dim));
+  clip-path:polygon(10px 0,100% 0,100% calc(100% - 10px),calc(100% - 10px) 100%,0 100%,0 10px);
+  box-shadow:0 0 12px rgba(0,229,255,.35);
+}
+.nav-btn:hover{box-shadow:0 0 18px rgba(0,229,255,.55)}
 </style>
 </head>
 <body>
@@ -167,6 +177,7 @@ Ohne passendes Token lehnt der PC alle Anfragen von hier ab.</p>
 selbst leitet dabei keine Daten durch und speichert auch keine eigene Kopie der Spieledaten.
 Aenderungen landen sofort in games.db auf dem PC, genau wie ueber die dortige GUI.</p>
 </div>
+<a class="nav-btn" href="/">&#8592; Zur Statusseite</a>
 </div>
 
 <script>

@@ -130,7 +130,10 @@ def handle(cl, request_line, my_ip, hostname, body=b""):
     path = parts[1] if len(parts) > 1 else "/"
 
     if method == "POST" and path == "/control/settings":
-        form = _parse_form(body.decode(errors="replace"))
+        # bytes.decode() nimmt auf diesem Board KEINE Keyword-Argumente
+        # (siehe README.md, Abschnitt "Problembehandlung") - bewusst
+        # argumentlos, kein decode(errors="replace").
+        form = _parse_form(body.decode())
         remote_config.save(form.get("pc_ip", ""), form.get("pc_port", "8080"), form.get("token", ""))
         _send_response(cl, "HTTP/1.1 303 See Other", [("Location", "/control?saved=1"), ("Content-Length", "0")], b"")
         return
