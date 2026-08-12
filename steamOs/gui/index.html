@@ -103,6 +103,12 @@ input[type=color]{
   border:1px solid var(--border);background:#0c1017;
 }
 .inline-form{display:flex;gap:8px;align-items:center;margin:0}
+.audio-cell{min-width:170px}
+.audio-current{color:var(--dim);font-size:.78em;margin-bottom:6px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:200px}
+.audio-cell button{padding:6px 10px}
+input[type=file]{
+  font:inherit;font-size:.78rem;color:var(--dim);max-width:170px;
+}
 .message{
   padding:12px 16px;margin-bottom:18px;font-size:.9rem;font-weight:600;
   background:rgba(255,255,255,.02);border-left:4px solid;
@@ -120,7 +126,7 @@ __MESSAGE__
 <div class="panel">
 <table>
 <thead>
-<tr><th>Name</th><th>Status</th><th>UID</th><th>Farbe</th><th></th></tr>
+<tr><th>Name</th><th>Status</th><th>UID</th><th>Farbe</th><th>Sound</th><th></th></tr>
 </thead>
 <tbody>
 __ROWS__
@@ -153,6 +159,10 @@ wieder bekannt zu sein.</p>
 <p class="hint">Farbe: Ein Klick auf das Farbfeld speichert die Auswahl sofort. Die Farbe eines Tags
 hat Vorrang vor der Farbe des verknuepften Spiels und wird an einen optionalen zweiten Pico
 (Led_Pico) weitergereicht, der damit einen LED-Streifen ansteuert.</p>
+<p class="hint">Sound: Ueber das Dateifeld eine MP3/WAV/OGG/FLAC/M4A-Datei je Spiel hochladen - sie wird
+lokal abgelegt und ab dann immer von dort geladen. &#9658; spielt sie hier zum Test ab, &#9632; stoppt
+die Wiedergabe, &#10005; entfernt die Verknuepfung wieder. Liegt ein Tag auf, das mit diesem Spiel
+verknuepft ist, spielt derselbe Sound automatisch parallel zum Spielstart.</p>
 </div>
 </body>
 </html>

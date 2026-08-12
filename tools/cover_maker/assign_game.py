@@ -55,8 +55,18 @@ class AssignGameApp:
         main.columnconfigure(2, weight=1)
         main.rowconfigure(1, weight=1)
 
-        ttk.Label(main, text="Gespeicherte Cover").grid(row=0, column=0, sticky="w")
-        self.cover_list = tk.Listbox(main, exportselection=False)
+        cover_header = ttk.Frame(main)
+        cover_header.grid(row=0, column=0, sticky="ew")
+        ttk.Label(cover_header, text="Gespeicherte Cover").pack(side="left")
+        self.only_unassigned_var = tk.BooleanVar(value=False)
+        ttk.Checkbutton(
+            cover_header,
+            text="Nur nicht zugewiesene",
+            variable=self.only_unassigned_var,
+            command=lambda: self.load_covers(),
+        ).pack(side="right")
+
+        self.cover_list = tk.Listbox(main, exportselection=False, selectmode="extended")
         self.cover_list.grid(row=1, column=0, sticky="nsew", padx=(0, 10))
         self.cover_list.bind("<<ListboxSelect>>", lambda *_: self.on_cover_select())
 
@@ -84,6 +94,9 @@ class AssignGameApp:
         button_row.pack(fill="x", padx=10, pady=(0, 10))
         ttk.Button(button_row, text="Zuweisen", command=self.assign_selected).pack(side="left")
         ttk.Button(button_row, text="Zuweisung entfernen", command=self.remove_assignment).pack(
+            side="left", padx=10
+        )
+        ttk.Button(button_row, text="Ausgewaehlte loeschen...", command=self.delete_selected).pack(
             side="left", padx=10
         )
 
@@ -116,7 +129,7 @@ class AssignGameApp:
         for _uid, _appid, name in self._visible_games:
             self.game_list.insert("end", name)
 
-    def load_covers(self, preselect_cover_id):
+    def load_covers(self, preselect_cover_id=None):
         conn = sqlite3.connect(COVERS_DB)
         try:
             ensure_covers_db(conn)
@@ -125,6 +138,9 @@ class AssignGameApp:
             ).fetchall()
         finally:
             conn.close()
+
+        if self.only_unassigned_var.get():
+            self.covers = [c for c in self.covers if not c[2]]
 
         self.cover_list.delete(0, "end")
         select_index = 0
@@ -143,7 +159,7 @@ class AssignGameApp:
             self.on_cover_select()
         else:
             self.preview_label.configure(image="")
-            self.assigned_label.configure(text="Noch keine Cover gespeichert.")
+            self.assigned_label.configure(text="Keine (passenden) Cover vorhanden.")
 
     # -- Auswahl ----------------------------------------------------
     def selected_cover(self):
@@ -151,6 +167,9 @@ class AssignGameApp:
         if not sel:
             return None
         return self.covers[sel[0]]
+
+    def selected_covers(self):
+        return [self.covers[i] for i in self.cover_list.curselection()]
 
     def on_cover_select(self):
         cover = self.selected_cover()
@@ -214,6 +233,72 @@ class AssignGameApp:
             conn.close()
 
         self.load_covers(cid)
+
+    def _cover_related_files(self, file_path):
+        """Ermittelt Hauptbild, Schneidelinien-Referenz und Projektdatei
+        eines Covers (siehe cover_maker.py: export_image legt diese drei
+        Dateien nebeneinander im selben Cover-Ordner an)."""
+        main_file = Path(file_path)
+        files = [main_file]
+        cutline = main_file.with_name(f"{main_file.stem}_schneidelinien{main_file.suffix}")
+        files.append(cutline)
+        project = main_file.with_name(f"{main_file.stem}.covermaker.json")
+        files.append(project)
+        return [f for f in files if f.exists()]
+
+    def delete_selected(self):
+        covers = self.selected_covers()
+        if not covers:
+            messagebox.showinfo("Hinweis", "Bitte mindestens ein Cover auswaehlen.")
+            return
+
+        assigned = [c for c in covers if c[2]]
+        if assigned:
+            names = ", ".join(f"#{c[0]} -> {c[2]}" for c in assigned)
+            if not messagebox.askyesno(
+                "Zugewiesene Cover loeschen?",
+                f"{len(assigned)} der ausgewaehlten Cover sind noch einem Spiel zugewiesen:\n{names}\n\n"
+                "Trotzdem endgueltig loeschen?",
+            ):
+                return
+
+        labels = "\n".join(f"#{c[0]} - {Path(c[1]).name}" for c in covers)
+        if not messagebox.askyesno(
+            "Cover endgueltig loeschen?",
+            f"Folgende {len(covers)} Cover inkl. aller zugehoerigen Dateien "
+            f"(Bild, Schneidelinien, Projektdatei) werden unwiderruflich geloescht:\n\n{labels}",
+        ):
+            return
+
+        errors = []
+        conn = sqlite3.connect(COVERS_DB)
+        try:
+            ensure_covers_db(conn)
+            for cid, file_path, _game_name, _created_at in covers:
+                cover_dir = Path(file_path).parent
+                for f in self._cover_related_files(file_path):
+                    try:
+                        f.unlink()
+                    except OSError as exc:
+                        errors.append(f"{f.name}: {exc}")
+                try:
+                    if cover_dir.is_dir() and not any(cover_dir.iterdir()):
+                        cover_dir.rmdir()
+                except OSError:
+                    pass
+                conn.execute("DELETE FROM covers WHERE id=?", (cid,))
+            conn.commit()
+        finally:
+            conn.close()
+
+        self.load_covers()
+        if errors:
+            messagebox.showwarning(
+                "Teilweise geloescht",
+                "Einige Dateien konnten nicht geloescht werden:\n" + "\n".join(errors),
+            )
+        else:
+            messagebox.showinfo("Geloescht", f"{len(covers)} Cover wurden geloescht.")
 
 
 def main():

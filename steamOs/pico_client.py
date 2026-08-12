@@ -38,6 +38,8 @@ import sys
 import time
 from pathlib import Path
 
+import audio_player
+import game_scanner
 import led_link
 import pico_link
 
@@ -82,6 +84,7 @@ def find_game_by_uid(uid):
         return None
     conn = sqlite3.connect(GAMES_DB_PATH)
     try:
+        game_scanner.ensure_db(conn)
         conn.row_factory = sqlite3.Row
         return conn.execute("SELECT * FROM games WHERE uid = ?", (uid,)).fetchone()
     finally:
@@ -288,6 +291,10 @@ def handle_tag(pico_ip, tcp_port, timestamp):
         return
 
     print(f"[{timestamp}] Tag erkannt: {game['name']} ({tag_uid})", flush=True)
+    # Sound und Spielstart laufen bewusst nebeneinander her: audio_player.play()
+    # ist selbst nicht blockierend (Windows: MCI async, Linux: eigener
+    # Player-Prozess), haelt launch_game() also nicht auf.
+    audio_player.play(game["audio_path"])
     proc = launch_game(game)
     if proc is None:
         return
@@ -317,6 +324,7 @@ def check_game_still_active(current):
     game = _running_game["game"]
     print(f"Tag fuer '{game['name']}' nicht mehr aufliegend oder gewechselt - beende Spiel.", flush=True)
     stop_game(game, _running_game["proc"])
+    audio_player.stop()
     _running_game = None
 
 

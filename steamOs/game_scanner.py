@@ -116,12 +116,14 @@ def ensure_db(conn):
             last_scanned TEXT NOT NULL
         )
     """)
-    # Migration fuer vor der Farbzuweisung angelegte games.db-Dateien, die
-    # die Spalte 'color' noch nicht haben (CREATE TABLE IF NOT EXISTS
-    # aendert ein bestehendes Schema nicht).
+    # Migration fuer vor der Farb-/Sound-Zuweisung angelegte games.db-Dateien,
+    # die diese Spalten noch nicht haben (CREATE TABLE IF NOT EXISTS aendert
+    # ein bestehendes Schema nicht).
     existing_cols = {row[1] for row in conn.execute("PRAGMA table_info(games)")}
     if "color" not in existing_cols:
         conn.execute("ALTER TABLE games ADD COLUMN color TEXT")
+    if "audio_path" not in existing_cols:
+        conn.execute("ALTER TABLE games ADD COLUMN audio_path TEXT")
     conn.commit()
 
 
