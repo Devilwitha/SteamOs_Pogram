@@ -28,6 +28,11 @@ Ablauf von poll_once():
   bestaetigt - danach erst wieder bei Tag-Wechsel/-Entfernung. Ein Wechsel
   auf einen anderen Tag wird - anders als das Entfernen - sofort ohne
   Toleranzzeit uebernommen.
+- Liegt eine Loeschanfrage vor (durch FORGET ausgeloest, siehe
+  request_forget()): die naechste aufgelegte Karte wird komplett aus
+  tag_store entfernt (nicht nur entknuepft) statt normal verarbeitet zu
+  werden - hat Vorrang vor einer gleichzeitig vorgemerkten
+  SELECT-Verknuepfung.
 
 Zusaetzlich kann jedem Tag unabhaengig von der Spiel-Verknuepfung eine
 eigene Farbe zugewiesen werden (set_color(), ueber TAGCOLOR:<uid>:<farbe>
@@ -50,6 +55,7 @@ _station = None
 
 _pending_write_uid = None
 _pending_write_name = None
+_pending_forget = False
 _current_uid_hex = None
 _current_game_uid = None
 _reported_uid = None
@@ -70,6 +76,19 @@ def request_write(game_uid, game_name=None):
     try:
         _pending_write_uid = game_uid
         _pending_write_name = game_name
+    finally:
+        _lock.release()
+
+
+def request_forget():
+    """Versetzt den Pico in den Loeschmodus: die naechste aufgelegte Karte
+    wird beim naechsten erfolgreichen Lesen komplett aus tag_store entfernt
+    (nicht nur entknuepft), ausgeloest durch FORGET. Hat Vorrang vor einer
+    gleichzeitig vorgemerkten SELECT-Verknuepfung."""
+    global _pending_forget
+    _lock.acquire()
+    try:
+        _pending_forget = True
     finally:
         _lock.release()
 
@@ -161,7 +180,7 @@ def poll_once():
     """Fuehrt einen einzelnen Lesezyklus aus. Ohne initialisierten
     RFID-Leser (kein RC522 angeschlossen bzw. init() fehlgeschlagen) ein
     No-Op."""
-    global _pending_write_uid, _pending_write_name, _current_uid_hex, _current_game_uid, _reported_uid, _last_seen_ms
+    global _pending_write_uid, _pending_write_name, _pending_forget, _current_uid_hex, _current_game_uid, _reported_uid, _last_seen_ms
 
     if _station is None:
         return
@@ -185,7 +204,23 @@ def poll_once():
 
     _lock.acquire()
     _last_seen_ms = time.ticks_ms()
+    forget_now = _pending_forget
     _lock.release()
+
+    if forget_now:
+        # Loeschmodus: diese Karte wird komplett entfernt statt normal
+        # verarbeitet zu werden - auch eine bestehende Spiel-Verknuepfung
+        # ist damit weg. Weder upsert_seen() noch die Link-Logik unten
+        # sollen den Tag danach in derselben Runde wieder anlegen.
+        tag_store.forget(uid_hex)
+        print("Tag", uid_hex, "geloescht")
+        _lock.acquire()
+        _pending_forget = False
+        _current_uid_hex = None
+        _current_game_uid = None
+        _reported_uid = None
+        _lock.release()
+        return
 
     if tag_store.upsert_seen(uid_hex):
         print("Neuer Tag erkannt:", uid_hex)

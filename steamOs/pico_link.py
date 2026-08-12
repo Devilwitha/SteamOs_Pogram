@@ -15,6 +15,7 @@ Protokoll ueber TCP (Standard-Port 5005), zeilenbasiert:
     LINK:<uid>:<uid2>[:<name>] OK:LINK:<uid>  oder  ERROR:unknown_tag
     TAGCOLOR:<uid>:<f>        OK:TAGCOLOR:<uid>  oder  ERROR:unknown_tag
     CURRENT?                  CURRENT:<json des aktuellen Tags>  oder  CURRENT:NONE
+    FORGET                    OK:FORGET
 
 Der optionale <name> bei SELECT/LINK ist der Anzeigename des Spiels, den
 der Pico fuers optionale LCD speichert (siehe Pico/tag_store.py) - ohne
@@ -169,3 +170,11 @@ def fetch_current(ip, tcp_port, timeout=2.0):
         except ValueError:
             return None
     return None
+
+
+def forget_next_tag(ip, tcp_port, timeout=3.0):
+    """Versetzt den Pico in den Loeschmodus: die naechste an den RC522
+    gehaltene Karte wird beim naechsten Lesen komplett aus tags.json
+    entfernt (nicht nur entknuepft wie link_tag() mit leerer game_uid) -
+    siehe FORGET im Protokoll oben bzw. Pico/tag_manager.request_forget()."""
+    return _send_command(ip, tcp_port, "FORGET", timeout) == "OK:FORGET"

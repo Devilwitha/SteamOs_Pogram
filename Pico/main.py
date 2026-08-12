@@ -111,7 +111,7 @@ def main():
 
     _lcd_show(lcd, "WLAN OK", my_ip)
     time.sleep(IP_ANZEIGE_SEK)
-    _lcd_show(lcd, "Pico bereit", my_ip)
+    _lcd_show(lcd, "System bereit", my_ip)
 
     try:
         tag_manager.init()

@@ -42,6 +42,11 @@ Zeilenbasiertes Protokoll ueber TCP (Port 5005):
                           "CURRENT:NONE"; genutzt, um den Led_Pico
                           kontinuierlich mit der passenden Farbe zu
                           versorgen (siehe ../Led_Pico)
+    FORGET            -> versetzt den Pico in den Loeschmodus: die
+                          naechste aufgelegte Karte wird beim naechsten
+                          Lesen komplett aus tags.json entfernt (nicht nur
+                          entknuepft, siehe tag_manager.request_forget());
+                          Antwort "OK:FORGET"
 
 HTTP (Port 80): "/" liefert die Statusseite (dark/modern), "/status.json"
 den aktuellen Status inkl. Tag-Liste als JSON.
@@ -51,7 +56,7 @@ aktuellen Tag-Zustand an (aktualisiert im Hintergrund-Thread direkt nach
 jedem tag_manager.poll_once(), siehe _background_loop): verknuepftes Spiel
 (Name falls bekannt, sonst die Spiel-UID), "Unbekannter Tag" bei einer
 noch nicht verknuepften Karte, oder der Bereitschafts-Bildschirm
-("Pico bereit" + IP), solange keine Karte aufliegt.
+("System bereit" + IP), solange keine Karte aufliegt.
 """
 import socket
 import select
@@ -141,6 +146,10 @@ def _handle_command(command):
         current = tag_manager.get_current()
         return "CURRENT:" + json.dumps(current) if current else "CURRENT:NONE"
 
+    if command == "FORGET":
+        tag_manager.request_forget()
+        return "OK:FORGET"
+
     return "ERROR:unknown_command"
 
 
@@ -163,7 +172,7 @@ def _lcd_status_text(current, my_ip):
     der Bereitschafts-Bildschirm angezeigt - so bleibt das LCD auch im
     Leerlauf sinnvoll belegt statt beim letzten Zufallszustand zu bleiben."""
     if current is None:
-        return "Pico bereit", my_ip
+        return "System bereit", my_ip
 
     game_uid = current.get("game_uid")
     game_name = current.get("game_name")

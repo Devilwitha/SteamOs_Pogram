@@ -70,6 +70,19 @@ def link(uid_hex, game_uid, game_name=None):
     _speichern()
 
 
+def forget(uid_hex):
+    """Entfernt einen Tag vollstaendig aus dem Speicher (nicht nur die
+    Spiel-Verknuepfung wie link() mit leerer game_uid) - der Tag muss
+    danach erneut aufgelegt werden, um wieder bekannt zu sein. Gibt True
+    zurueck, wenn der Tag zuvor bekannt war."""
+    _laden()
+    if uid_hex not in _tags:
+        return False
+    del _tags[uid_hex]
+    _speichern()
+    return True
+
+
 def set_color(uid_hex, color):
     """Setzt (oder loescht, falls color leer ist) die eigene LED-Farbe
     eines Tags. Gibt False zurueck, wenn dieser Tag noch nie gesehen

@@ -133,11 +133,14 @@ def _find_pids_linux(target):
     return pids
 
 
-def _find_pids_windows(target):
-    """Wie _find_pids_linux, aber ueber WMI (Win32_Process) statt /proc,
-    da Windows kein /proc kennt. Wird per PowerShell abgefragt, um ohne
-    Zusatzpaket (z. B. psutil) auszukommen - reicht, da stop_game() das
-    nur im (seltenen) Beenden-Fall aufruft, nicht bei jedem Poll."""
+def _find_pids_windows_by_path(target):
+    """Ueber WMI (Win32_Process) per PowerShell abgefragt, um ohne
+    Zusatzpaket (z. B. psutil) auszukommen. WICHTIG: ExecutablePath/
+    CommandLine bleiben bei Win32_Process aus Berechtigungsgruenden fuer
+    etliche Prozesse leer (bekannte WMI-Einschraenkung, unabhaengig davon
+    ob dieses Skript erhoeht laeuft) - diese Methode ist deshalb nur ein
+    Zusatz zu _find_pids_windows_by_name() (siehe dort), nicht die primaere
+    Erkennung."""
     try:
         result = subprocess.run(
             [
@@ -170,16 +173,59 @@ def _find_pids_windows(target):
     return pids
 
 
+def _candidate_exe_names(install_path):
+    """Basisnamen aller .exe-Dateien unterhalb von install_path (klein
+    geschrieben) - Grundlage fuer _find_pids_windows_by_name(). Reine
+    Dateisystem-Suche, unabhaengig von Prozess-Berechtigungen."""
+    try:
+        return {p.name.lower() for p in Path(install_path).rglob("*.exe")}
+    except OSError:
+        return set()
+
+
+def _find_pids_windows_by_name(names):
+    """Primaere Windows-Erkennung: nutzt 'tasklist' (kein PowerShell/WMI
+    noetig) um laufende Prozesse anhand ihres Datei-Basisnamens zu finden.
+    Anders als Win32_Process.ExecutablePath/CommandLine (siehe
+    _find_pids_windows_by_path) liefert tasklist den Image-Namen
+    zuverlaessig fuer praktisch alle sichtbaren Prozesse, unabhaengig von
+    Berechtigungen - deutlich robuster fuer diesen Zweck."""
+    if not names:
+        return []
+    try:
+        result = subprocess.run(
+            ["tasklist", "/fo", "csv", "/nh"],
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+    except (OSError, subprocess.SubprocessError) as e:
+        print(f"Prozessliste (tasklist) konnte nicht abgefragt werden: {e}", flush=True)
+        return []
+
+    pids = []
+    for row in csv.reader(result.stdout.splitlines()):
+        if len(row) < 2:
+            continue
+        image_name, pid_str = row[0], row[1]
+        if image_name.lower() in names:
+            try:
+                pids.append(int(pid_str))
+            except ValueError:
+                pass
+    return pids
+
+
 def _find_pids_under_install_path(install_path):
-    """Sucht laufende Prozesse, deren ausfuehrbare Datei oder
-    Kommandozeile unterhalb von install_path liegt (Linux ueber /proc,
-    Windows ueber WMI/PowerShell - siehe _find_pids_linux/_find_pids_windows).
-    Noetig, weil 'steam -applaunch <appid>' (siehe game_scanner.py) nur den
-    bereits laufenden Steam-Client benachrichtigt und sich selbst i. d. R.
-    sofort wieder beendet - das eigentliche Spiel laeuft als eigener, von
-    Steam gestarteter Prozess. Ohne install_path oder auf einer nicht
-    unterstuetzten Plattform liefert das eine leere Liste; dann bleibt
-    fuer stop_game() nur proc.terminate()."""
+    """Sucht laufende Prozesse, die zu install_path gehoeren (Linux ueber
+    /proc, Windows ueber tasklist-Namensabgleich + WMI-Pfadabgleich als
+    Zusatz - siehe die einzelnen _find_pids_*-Funktionen). Noetig, weil
+    'steam -applaunch <appid>' (siehe game_scanner.py) nur den bereits
+    laufenden Steam-Client benachrichtigt und sich selbst i. d. R. sofort
+    wieder beendet - das eigentliche Spiel laeuft als eigener, von Steam
+    gestarteter Prozess. Ohne install_path oder auf einer nicht
+    unterstuetzten Plattform liefert das eine leere Liste; dann bleibt fuer
+    stop_game() nur proc.terminate()."""
     if not install_path:
         return []
 
@@ -189,7 +235,9 @@ def _find_pids_under_install_path(install_path):
         return []
 
     if sys.platform == "win32":
-        return _find_pids_windows(target)
+        pids = set(_find_pids_windows_by_name(_candidate_exe_names(target)))
+        pids.update(_find_pids_windows_by_path(target))
+        return list(pids)
     return _find_pids_linux(target)
 
 
@@ -199,20 +247,30 @@ def stop_game(game, proc):
     bei ueber Steam gestarteten Spielen meist nicht reicht. Gibt True
     zurueck, wenn mindestens ein Prozess ein Beenden-Signal erhalten hat
     (keine Garantie, dass er sich auch tatsaechlich beendet)."""
+    pids = _find_pids_under_install_path(game["install_path"])
+    print(f"Beende '{game['name']}': gefundene Prozesse unter install_path: {pids or 'keine'}", flush=True)
+
     stopped = False
-    for pid in _find_pids_under_install_path(game["install_path"]):
+    for pid in pids:
         try:
             os.kill(pid, signal.SIGTERM)
             stopped = True
-        except OSError:
-            pass
+        except OSError as e:
+            print(f"  Konnte PID {pid} nicht beenden: {e}", flush=True)
 
     if proc is not None and proc.poll() is None:
         try:
             proc.terminate()
             stopped = True
-        except OSError:
-            pass
+        except OSError as e:
+            print(f"  Konnte Start-Prozess nicht beenden: {e}", flush=True)
+
+    if not stopped:
+        print(
+            f"  Warnung: kein Prozess von '{game['name']}' konnte beendet werden "
+            "(install_path falsch/leer, oder das Spiel laeuft unter einem anderen Pfad?).",
+            flush=True,
+        )
 
     return stopped
 

@@ -172,6 +172,19 @@ erneutes Auflegen) per `LINK:<uid>:<spiel-uid>` mit einem Spiel
 verknuepfen oder wieder trennen - die zweite Richtung neben "Spiel
 waehlen, dann Tag scannen".
 
+Der Button **"Tag loeschen..."** ueber dieser Tabelle entfernt dagegen
+einen Tag komplett (nicht nur die Verknuepfung): ein Klick schickt
+`FORGET` an den Pico (`pico_link.forget_next_tag()`) und versetzt ihn
+damit in den Loeschmodus; die Seite zeigt danach die Aufforderung, den zu
+loeschenden Tag an den RC522 zu halten. Der Pico entfernt die naechste
+aufgelegte Karte beim naechsten Lesen vollstaendig aus `tags.json` (siehe
+`Pico/README.md#rfid-verhalten-tag_managerpy--tag_storepy`) - sie
+verschwindet dadurch aus der Tag-Liste und muss danach erneut aufgelegt
+werden, um wieder als bekannter Tag zu erscheinen. Es gibt (wie beim
+uebrigen Formular-basierten Aufbau der GUI) keine Live-Bestaetigung per
+JavaScript, sobald die Loeschung tatsaechlich stattgefunden hat - ein
+Neuladen der Seite zeigt den aktuellen Stand.
+
 ## Automatischer Spielstart per RFID-Tag
 
 Sobald `pico_client.py` laeuft (siehe oben), passiert bei jedem 3-Sekunden-

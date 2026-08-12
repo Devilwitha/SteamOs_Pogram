@@ -129,6 +129,9 @@ __ROWS__
 </div>
 
 <h2>Bekannte RFID-Tags</h2>
+<form method="POST" action="/forget_tag" class="inline-form" style="margin-bottom:14px">
+<button type="submit" class="secondary">Tag loeschen...</button>
+</form>
 <div class="panel">
 <table>
 <thead>
@@ -143,6 +146,10 @@ __TAG_ROWS__
 auch ohne vorher ein Spiel ausgewaehlt zu haben. Verknuepfung ist in beide Richtungen moeglich:
 entweder oben ein Spiel senden und danach einen Tag auflegen, oder hier direkt einem bereits
 bekannten Tag ein Spiel zuweisen.</p>
+<p class="hint">"Tag loeschen...": versetzt den Pico in den Loeschmodus. Danach den zu
+loeschenden Tag an den RC522 halten - er wird beim naechsten Erkennen komplett entfernt
+(nicht nur die Spiel-Verknuepfung getrennt) und muesste danach erneut aufgelegt werden, um
+wieder bekannt zu sein.</p>
 <p class="hint">Farbe: Ein Klick auf das Farbfeld speichert die Auswahl sofort. Die Farbe eines Tags
 hat Vorrang vor der Farbe des verknuepften Spiels und wird an einen optionalen zweiten Pico
 (Led_Pico) weitergereicht, der damit einen LED-Streifen ansteuert.</p>

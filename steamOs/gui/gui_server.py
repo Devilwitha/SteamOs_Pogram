@@ -222,6 +222,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
             "/unlink_tag": self._handle_unlink_tag,
             "/set_game_color": self._handle_set_game_color,
             "/set_tag_color": self._handle_set_tag_color,
+            "/forget_tag": self._handle_forget_tag,
         }
         handler = routes.get(self.path)
         if handler is None:
@@ -292,6 +293,21 @@ class Handler(http.server.BaseHTTPRequestHandler):
         if pico_link.set_tag_color(pico_ip, tcp_port, uid, color):
             return f"<div class='message success'>Farbe fuer Tag {_escape(uid)} gespeichert.</div>"
         return f"<div class='message error'>Farbe fuer Tag {_escape(uid)} konnte nicht gespeichert werden (unbekannter Tag?).</div>"
+
+    def _handle_forget_tag(self, form):
+        config = pico_link.load_config()
+        tcp_port = config.get("tcp_port", 5005)
+        pico_ip = _resolve_pico_ip(config)
+        if not pico_ip:
+            return "<div class='message error'>Pico wurde im Netzwerk nicht gefunden.</div>"
+
+        if pico_link.forget_next_tag(pico_ip, tcp_port):
+            return (
+                "<div class='message success'>Loeschmodus aktiv: Jetzt den zu loeschenden Tag an "
+                "den RC522 halten - er wird beim naechsten Erkennen dauerhaft entfernt (inklusive "
+                "einer eventuellen Spiel-Verknuepfung).</div>"
+            )
+        return "<div class='message error'>Pico hat den Loeschmodus nicht bestaetigt.</div>"
 
     def _link(self, uid, game_uid, aktion, name=None):
         config = pico_link.load_config()

@@ -49,6 +49,12 @@ optionalem **16x2-I2C-LCD**.
        [Led_Pico](../Led_Pico) kontinuierlich mit der passenden Farbe zu
        versorgen, und intern von `ping_server._background_loop` genutzt,
        um das optionale LCD aktuell zu halten (siehe unten)
+     - `FORGET` -> versetzt den Pico in den Loeschmodus: die naechste
+       aufgelegte Karte wird beim naechsten Lesen komplett aus `tags.json`
+       entfernt (nicht nur entknuepft wie bei `LINK` mit leerer Spiel-UID)
+       und muss danach erneut aufgelegt werden, um wieder bekannt zu sein;
+       Antwort `OK:FORGET` (genutzt vom "Tag loeschen..."-Button in der
+       [SteamOS-GUI](../steamOs/gui))
    - **HTTP-Statuswebseite (Port 80):** `/` zeigt eine dunkel/modern
      gestaltete Statusseite (Geraetestatus, aktueller Tag, alle bekannten
      Tags), `/status.json` liefert dieselben Daten als JSON. Nur im
@@ -121,6 +127,13 @@ eigene Erweiterungen mit `_thread` schreibst, beachte diese Einschraenkung.
   optionale [Led_Pico](../Led_Pico) einen LED-Streifen laufend in der
   passenden Farbe zeigt, solange der Tag aufliegt (Tag-Farbe hat Vorrang
   vor der Farbe des verknuepften Spiels).
+- Ueber `FORGET` (aus der SteamOS-GUI per "Tag loeschen..."-Button) laesst
+  sich ein Tag komplett vergessen statt nur entknuepft: der Pico merkt
+  sich die Anfrage vor und entfernt die naechste aufgelegte Karte beim
+  naechsten Lesen vollstaendig aus `tags.json` (inkl. Spiel-Verknuepfung
+  und Farbe) - sie muss danach erneut aufgelegt werden, um wieder als
+  bekannter Tag zu erscheinen. Hat Vorrang vor einer gleichzeitig per
+  `SELECT` vorgemerkten Verknuepfung.
 - Zum Testen/Debuggen des rohen RC522-Speicherinhalts (unabhaengig von
   main.py): `rfid_test.py` direkt in Thonny ausfuehren - zeigt die
   physische UID sowie den kompletten Speicherinhalt (alle
@@ -181,7 +194,7 @@ darauf zunaechst den WLAN-Verbindungsstatus:
 |---|---|
 | Waehrend des Verbindungsversuchs | `WLAN verbinden` / `...` |
 | Erfolgreich verbunden (5 Sekunden) | `WLAN OK` / `<IP-Adresse>` |
-| Danach, bis der erste RFID-Zyklus laeuft | `Pico bereit` / `<IP-Adresse>` |
+| Danach, bis der erste RFID-Zyklus laeuft | `System bereit` / `<IP-Adresse>` |
 | Verbindung fehlgeschlagen (Hotspot aktiv) | `WLAN Fehler` / `AP: Pico-Setup` |
 
 Sobald WLAN und RFID-Leser stehen, uebernimmt
@@ -192,7 +205,7 @@ Tags:
 
 | Zustand | LCD-Anzeige |
 |---|---|
-| Keine Karte aufgelegt | `Pico bereit` / `<IP-Adresse>` |
+| Keine Karte aufgelegt | `System bereit` / `<IP-Adresse>` |
 | Karte aufgelegt, aber (noch) keinem Spiel zugeordnet | `Unbekannter Tag` / `UID:<hex-uid>` |
 | Karte verknuepft, Spielname bekannt | `<Spielname>` / `Tag erkannt` |
 | Karte verknuepft, aber (noch) kein Name hinterlegt | `Spiel verknuepft` / `UID:<spiel-uid>` |
