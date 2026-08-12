@@ -11,11 +11,13 @@ Thread wuerde mit `OSError: core1 in use` fehlschlagen. Deshalb:
   zusammen im einen verfuegbaren Hintergrund-Thread (_background_loop).
 
 Zeilenbasiertes Protokoll ueber TCP (Port 5005):
-    PING              -> "erreichbar"
-    SELECT:<uid>      -> UID wird in SELECTED_GAME_FILE gespeichert und
-                          zum Verknuepfen mit dem naechsten aufgelegten
-                          Tag vorgemerkt (siehe tag_manager.py);
-                          Antwort "OK:<uid>" bestaetigt den Empfang
+    PING                    -> "erreichbar"
+    SELECT:<uid>[:<name>]   -> UID wird in SELECTED_GAME_FILE gespeichert
+                          und zum Verknuepfen mit dem naechsten
+                          aufgelegten Tag vorgemerkt (siehe
+                          tag_manager.py); der optionale Anzeigename wird
+                          fuers LCD mitgespeichert; Antwort "OK:<uid>"
+                          bestaetigt den Empfang
     TAG?              -> "TAG:<uid>", falls ein Tag mit einer neuen/noch
                           nicht bestaetigten Spiel-UID aufliegt, sonst
                           "TAG:NONE"
@@ -25,17 +27,17 @@ Zeilenbasiertes Protokoll ueber TCP (Port 5005):
                           gewechselt hat
     TAGS?             -> "TAGS:<json-liste>" aller bisher erkannten Tags
                           mit ihrer (ggf. fehlenden) Spiel-Verknuepfung
-                          und eigenen Farbe
-    LINK:<uid>:<game>  -> verknuepft einen bereits bekannten Tag direkt
-                          (ohne erneutes Auflegen) mit einer Spiel-UID
-                          (game leer = Verknuepfung aufheben); Antwort
-                          "OK:LINK:<uid>" oder "ERROR:unknown_tag"
+                          (inkl. Anzeigename) und eigenen Farbe
+    LINK:<uid>:<game>[:<name>] -> verknuepft einen bereits bekannten Tag
+                          direkt (ohne erneutes Auflegen) mit einer
+                          Spiel-UID (game leer = Verknuepfung aufheben);
+                          Antwort "OK:LINK:<uid>" oder "ERROR:unknown_tag"
     TAGCOLOR:<uid>:<f> -> setzt die eigene LED-Farbe eines bereits
                           bekannten Tags (f leer = Farbe loeschen);
                           Antwort "OK:TAGCOLOR:<uid>" oder
                           "ERROR:unknown_tag"
     CURRENT?          -> "CURRENT:<json>" mit dem gerade aufliegenden Tag
-                          (uid/game_uid/color), unabhaengig vom
+                          (uid/game_uid/game_name/color), unabhaengig vom
                           einmaligen TAG?-Meldezustand - oder
                           "CURRENT:NONE"; genutzt, um den Led_Pico
                           kontinuierlich mit der passenden Farbe zu
@@ -43,6 +45,13 @@ Zeilenbasiertes Protokoll ueber TCP (Port 5005):
 
 HTTP (Port 80): "/" liefert die Statusseite (dark/modern), "/status.json"
 den aktuellen Status inkl. Tag-Liste als JSON.
+
+Ist ein LCD angeschlossen (siehe main.py/i2c_lcd.py), zeigt es laufend den
+aktuellen Tag-Zustand an (aktualisiert im Hintergrund-Thread direkt nach
+jedem tag_manager.poll_once(), siehe _background_loop): verknuepftes Spiel
+(Name falls bekannt, sonst die Spiel-UID), "Unbekannter Tag" bei einer
+noch nicht verknuepften Karte, oder der Bereitschafts-Bildschirm
+("Pico bereit" + IP), solange keine Karte aufliegt.
 """
 import socket
 import select
@@ -78,7 +87,10 @@ def _handle_command(command):
         return "erreichbar"
 
     if command.startswith("SELECT:"):
-        uid = command[len("SELECT:"):].strip()
+        payload = command[len("SELECT:"):]
+        parts = payload.split(":", 1)
+        uid = parts[0].strip()
+        name = parts[1].strip() if len(parts) > 1 and parts[1].strip() else None
         if not uid:
             return "ERROR:empty_uid"
         try:
@@ -86,7 +98,7 @@ def _handle_command(command):
                 f.write(uid)
         except OSError:
             return "ERROR:write_failed"
-        tag_manager.request_write(uid)
+        tag_manager.request_write(uid, name)
         return "OK:" + uid
 
     if command == "TAG?":
@@ -106,10 +118,11 @@ def _handle_command(command):
         rest = command[len("LINK:"):]
         if ":" not in rest:
             return "ERROR:bad_format"
-        uid_hex, game_uid = rest.split(":", 1)
-        uid_hex = uid_hex.strip()
-        game_uid = game_uid.strip()
-        if tag_manager.link_existing(uid_hex, game_uid):
+        parts = rest.split(":", 2)
+        uid_hex = parts[0].strip()
+        game_uid = parts[1].strip() if len(parts) > 1 else ""
+        name = parts[2].strip() if len(parts) > 2 and parts[2].strip() else None
+        if tag_manager.link_existing(uid_hex, game_uid, name):
             return "OK:LINK:" + uid_hex
         return "ERROR:unknown_tag"
 
@@ -129,6 +142,39 @@ def _handle_command(command):
         return "CURRENT:" + json.dumps(current) if current else "CURRENT:NONE"
 
     return "ERROR:unknown_command"
+
+
+def _lcd_write(lcd, zeile1, zeile2=""):
+    if lcd is None:
+        return
+    try:
+        lcd.clear()
+        lcd.putstr(zeile1[:16])
+        if zeile2:
+            lcd.move_to(0, 1)
+            lcd.putstr(zeile2[:16])
+    except Exception as e:
+        print("LCD-Fehler:", e)
+
+
+def _lcd_status_text(current, my_ip):
+    """Ermittelt (zeile1, zeile2) fuers LCD aus dem aktuell aufliegenden
+    Tag (siehe tag_manager.get_current()). Liegt keine Karte auf, wird
+    der Bereitschafts-Bildschirm angezeigt - so bleibt das LCD auch im
+    Leerlauf sinnvoll belegt statt beim letzten Zufallszustand zu bleiben."""
+    if current is None:
+        return "Pico bereit", my_ip
+
+    game_uid = current.get("game_uid")
+    game_name = current.get("game_name")
+
+    if not game_uid:
+        return "Unbekannter Tag", "UID:" + (current.get("uid") or "")
+
+    if game_name:
+        return game_name, "Tag erkannt"
+
+    return "Spiel verknuepft", "UID:" + game_uid
 
 
 def _read_line(cl, max_len=256):
@@ -206,10 +252,11 @@ def _serve(my_ip, hostname):
                 _handle_http_client(cl, my_ip, hostname)
 
 
-def _background_loop(my_ip):
+def _background_loop(my_ip, lcd=None):
     """Laeuft im einzigen verfuegbaren Hintergrund-Thread: beantwortet
     UDP-Discovery-Anfragen, ruft dazwischen regelmaessig
-    tag_manager.poll_once() auf und prueft von Zeit zu Zeit, ob die
+    tag_manager.poll_once() auf, aktualisiert danach bei Bedarf das LCD
+    (siehe _lcd_status_text) und prueft von Zeit zu Zeit, ob die
     WLAN-Verbindung noch steht (siehe WLAN_CHECK_INTERVAL_MS)."""
     s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
@@ -220,6 +267,7 @@ def _background_loop(my_ip):
     sta = network.WLAN(network.STA_IF)
     last_poll = time.ticks_ms()
     last_wlan_check = time.ticks_ms()
+    last_lcd_state = "unset"
     while True:
         try:
             data, addr = s.recvfrom(64)
@@ -233,6 +281,18 @@ def _background_loop(my_ip):
             tag_manager.poll_once()
             last_poll = now
 
+            if lcd is not None:
+                current = tag_manager.get_current()
+                state = (
+                    (current.get("uid"), current.get("game_uid"), current.get("game_name"))
+                    if current
+                    else None
+                )
+                if state != last_lcd_state:
+                    zeile1, zeile2 = _lcd_status_text(current, my_ip)
+                    _lcd_write(lcd, zeile1, zeile2)
+                    last_lcd_state = state
+
         if time.ticks_diff(now, last_wlan_check) >= WLAN_CHECK_INTERVAL_MS:
             last_wlan_check = now
             if not sta.isconnected():
@@ -240,9 +300,10 @@ def _background_loop(my_ip):
                 machine.reset()
 
 
-def start(my_ip, hostname=""):
-    """Startet den kombinierten Discovery-/RFID-Hintergrund-Thread und
-    danach TCP-Steuer-Server + HTTP-Statusserver (blockierend im
-    aufrufenden Thread)."""
-    _thread.start_new_thread(_background_loop, (my_ip,))
+def start(my_ip, hostname="", lcd=None):
+    """Startet den kombinierten Discovery-/RFID-Hintergrund-Thread (der bei
+    vorhandenem LCD auch dessen Anzeige aktuell haelt) und danach
+    TCP-Steuer-Server + HTTP-Statusserver (blockierend im aufrufenden
+    Thread)."""
+    _thread.start_new_thread(_background_loop, (my_ip, lcd))
     _serve(my_ip, hostname)

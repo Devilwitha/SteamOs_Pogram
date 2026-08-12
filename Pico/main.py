@@ -118,7 +118,11 @@ def main():
     except Exception as e:
         print("RFID-Leser (RC522) konnte nicht initialisiert werden:", e)
 
-    ping_server.start(my_ip, HOSTNAME)
+    # Ab hier uebernimmt ping_server._background_loop die LCD-Anzeige und
+    # zeigt laufend den aktuell aufliegenden Tag (verknuepftes Spiel bzw.
+    # "Unbekannter Tag") oder bei leerem Leser wieder diesen
+    # Bereitschafts-Bildschirm an.
+    ping_server.start(my_ip, HOSTNAME, lcd)
 
 
 main()

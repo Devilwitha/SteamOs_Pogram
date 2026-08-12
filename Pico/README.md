@@ -23,7 +23,8 @@ optionalem **16x2-I2C-LCD**.
    den RC522 (`tag_manager.py`) und startet:
    - **TCP-Steuer-Server (Port 5005):** Zeilenbasiertes Protokoll:
      - `PING` -> Antwort `erreichbar` (periodischer Erreichbarkeits-Check von SteamOS)
-     - `SELECT:<uid>` -> merkt die UID zum Verknuepfen mit dem **naechsten
+     - `SELECT:<uid>[:<name>]` -> merkt die UID (optional mit
+       Anzeigename fuers LCD) zum Verknuepfen mit dem **naechsten
        aufgelegten RFID-Tag** vor; Antwort `OK:<uid>`
        (wird von der [SteamOS-GUI](../steamOs/gui) genutzt)
      - `TAG?` -> Antwort `TAG:<uid>`, falls ein Tag mit einer neuen/noch nicht
@@ -32,21 +33,22 @@ optionalem **16x2-I2C-LCD**.
        Antwort `OK:STARTED:<uid>` (oder `ERROR:mismatch`, falls der Tag inzwischen
        gewechselt hat)
      - `TAGS?` -> Antwort `TAGS:<json-liste>` aller bisher erkannten Tags mit
-       ihrer (ggf. fehlenden) Spiel-Verknuepfung
-     - `LINK:<uid>:<spiel-uid>` -> verknuepft einen bereits bekannten Tag
-       direkt mit einem Spiel, ohne dass er erneut aufgelegt werden muss
-       (leere Spiel-UID = Verknuepfung aufheben); Antwort `OK:LINK:<uid>`
-       oder `ERROR:unknown_tag`
+       ihrer (ggf. fehlenden) Spiel-Verknuepfung (inkl. Anzeigename)
+     - `LINK:<uid>:<spiel-uid>[:<name>]` -> verknuepft einen bereits
+       bekannten Tag direkt mit einem Spiel, ohne dass er erneut
+       aufgelegt werden muss (leere Spiel-UID = Verknuepfung aufheben);
+       Antwort `OK:LINK:<uid>` oder `ERROR:unknown_tag`
      - `TAGCOLOR:<uid>:<farbe>` -> setzt (leere Farbe = loescht) die
        eigene LED-Farbe eines bereits bekannten Tags, unabhaengig von der
        Spiel-Verknuepfung; Antwort `OK:TAGCOLOR:<uid>` oder
        `ERROR:unknown_tag`
      - `CURRENT?` -> Antwort `CURRENT:<json>` mit dem gerade aufliegenden
-       Tag (`uid`/`game_uid`/`color`), unabhaengig vom einmaligen
-       `TAG?`-Meldezustand, sonst `CURRENT:NONE` - wird von
+       Tag (`uid`/`game_uid`/`game_name`/`color`), unabhaengig vom
+       einmaligen `TAG?`-Meldezustand, sonst `CURRENT:NONE` - wird von
        `steamOs/pico_client.py` genutzt, um den optionalen
        [Led_Pico](../Led_Pico) kontinuierlich mit der passenden Farbe zu
-       versorgen
+       versorgen, und intern von `ping_server._background_loop` genutzt,
+       um das optionale LCD aktuell zu halten (siehe unten)
    - **HTTP-Statuswebseite (Port 80):** `/` zeigt eine dunkel/modern
      gestaltete Statusseite (Geraetestatus, aktueller Tag, alle bekannten
      Tags), `/status.json` liefert dieselben Daten als JSON. Nur im
@@ -82,6 +84,16 @@ eigene Erweiterungen mit `_thread` schreibst, beachte diese Einschraenkung.
 
 - Der Pico **liest laufend** die aufliegende Karte (physische UID, per
   Anti-Kollisionserkennung - immer moeglich, unabhaengig vom Tag-Typ).
+- Der MFRC522 liest eine aufliegende Karte nicht in jedem der
+  `POLL_INTERVAL_MS` (300 ms)-Zyklen zuverlaessig. Deshalb gilt ein Tag
+  erst als entfernt, wenn er `TAG_GRACE_MS` (Standard 3000 ms, siehe
+  `tag_manager.py`) lang nicht mehr gelesen wurde - solange derselbe Tag
+  (auch mit gelegentlichen Aussetzern) weiter aufliegt, bleibt der
+  gemeldete Zustand (`TAG?`/`CURRENT?`, LCD) unveraendert stabil. Ein
+  Wechsel auf einen **anderen** Tag wird dagegen sofort ohne
+  Toleranzzeit uebernommen. `steamOs/pico_client.py` nutzt genau das,
+  um ein per Tag gestartetes Spiel automatisch zu beenden, sobald der
+  Tag laenger fehlt oder gewechselt hat (siehe `steamOs/README.md`).
 - Jede neu gesehene Karte wird automatisch (ohne Verknuepfung) in
   `tags.json` gespeichert und ist damit sofort in der Statuswebseite bzw.
   ueber `TAGS?`/die SteamOS-GUI sichtbar.
@@ -163,14 +175,35 @@ Potentiometer auf dem Backpack einstellbar).
 
 `main.py` versucht das LCD automatisch zu initialisieren (I2C-Scan, erst
 Adresse `0x27`, sonst die erste gefundene Adresse z. B. `0x3F`) und zeigt
-darauf den WLAN-Verbindungsstatus:
+darauf zunaechst den WLAN-Verbindungsstatus:
 
 | Zeitpunkt | LCD-Anzeige |
 |---|---|
 | Waehrend des Verbindungsversuchs | `WLAN verbinden` / `...` |
 | Erfolgreich verbunden (5 Sekunden) | `WLAN OK` / `<IP-Adresse>` |
-| Danach dauerhaft | `Pico bereit` / `<IP-Adresse>` |
+| Danach, bis der erste RFID-Zyklus laeuft | `Pico bereit` / `<IP-Adresse>` |
 | Verbindung fehlgeschlagen (Hotspot aktiv) | `WLAN Fehler` / `AP: Pico-Setup` |
+
+Sobald WLAN und RFID-Leser stehen, uebernimmt
+`ping_server._background_loop` die Anzeige und haelt sie direkt nach
+jedem RFID-Lesezyklus (alle `tag_manager.POLL_INTERVAL_MS`, Standard
+300 ms) aktuell - das LCD zeigt also laufend den Zustand des aufgelegten
+Tags:
+
+| Zustand | LCD-Anzeige |
+|---|---|
+| Keine Karte aufgelegt | `Pico bereit` / `<IP-Adresse>` |
+| Karte aufgelegt, aber (noch) keinem Spiel zugeordnet | `Unbekannter Tag` / `UID:<hex-uid>` |
+| Karte verknuepft, Spielname bekannt | `<Spielname>` / `Tag erkannt` |
+| Karte verknuepft, aber (noch) kein Name hinterlegt | `Spiel verknuepft` / `UID:<spiel-uid>` |
+
+Der Spielname stammt aus dem optionalen dritten Feld von `SELECT:<uid>:<name>`
+bzw. `LINK:<uid>:<spiel-uid>:<name>` (siehe oben) - die
+[SteamOS-GUI](../steamOs/gui) schickt ihn automatisch mit, wenn ein Spiel
+per "An Pico senden" ausgewaehlt oder ein Tag aus der Tag-Liste heraus
+verknuepft wird. Er wird zusammen mit der Verknuepfung in `tags.json`
+gespeichert, bleibt also auch nach einem Neustart des Pico erhalten und
+wird bei einer erneuten Verknuepfung ohne Namen nicht ueberschrieben.
 
 Ist kein LCD angeschlossen (I2C-Scan findet nichts) oder schlaegt die
 Initialisierung fehl, wird das automatisch erkannt und uebersprungen - der

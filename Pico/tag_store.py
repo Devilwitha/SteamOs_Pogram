@@ -16,7 +16,7 @@ import ujson as json
 
 DATEI = "tags.json"
 
-_tags = None  # {"<uid_hex>": {"game_uid": str|None, "color": str|None}}
+_tags = None  # {"<uid_hex>": {"game_uid": str|None, "game_name": str|None, "color": str|None}}
 
 
 def _laden():
@@ -54,12 +54,18 @@ def upsert_seen(uid_hex):
     return True
 
 
-def link(uid_hex, game_uid):
+def link(uid_hex, game_uid, game_name=None):
     """Verknuepft (oder loest die Verknuepfung von, falls game_uid leer
-    ist) einen bereits bekannten oder neuen Tag mit einer Spiel-UID."""
+    ist) einen bereits bekannten oder neuen Tag mit einer Spiel-UID.
+    game_name ist optional (fuer die LCD-Anzeige) - wird sie nicht
+    mitgegeben, bleibt ein zuvor gespeicherter Name erhalten."""
     _laden()
     entry = _tags.get(uid_hex, {})
     entry["game_uid"] = game_uid or None
+    if game_uid:
+        entry["game_name"] = game_name if game_name else entry.get("game_name")
+    else:
+        entry["game_name"] = None
     _tags[uid_hex] = entry
     _speichern()
 
@@ -81,6 +87,11 @@ def set_color(uid_hex, color):
 def to_list():
     _laden()
     return [
-        {"uid": uid, "game_uid": daten.get("game_uid"), "color": daten.get("color")}
+        {
+            "uid": uid,
+            "game_uid": daten.get("game_uid"),
+            "game_name": daten.get("game_name"),
+            "color": daten.get("color"),
+        }
         for uid, daten in _tags.items()
     ]

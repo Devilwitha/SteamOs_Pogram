@@ -89,6 +89,20 @@ def _resolve_pico_ip(config):
     return config.get("pico_ip") or pico_link.discover_pico(udp_port)
 
 
+def _lookup_game_name(uid):
+    """Anzeigename zu einer Spiel-UID (fuers Pico-LCD) - None, wenn
+    unbekannt oder DB nicht vorhanden."""
+    if not uid or not DB_PATH.is_file():
+        return None
+    conn = sqlite3.connect(DB_PATH)
+    try:
+        game_scanner.ensure_db(conn)
+        row = conn.execute("SELECT name FROM games WHERE uid = ?", (uid,)).fetchone()
+        return row[0] if row else None
+    finally:
+        conn.close()
+
+
 def _render_game_rows(games):
     if not games:
         return (
@@ -233,7 +247,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
         if not pico_ip:
             return "<div class='message error'>Pico wurde im Netzwerk nicht gefunden.</div>"
 
-        ok, confirmed = pico_link.select_game(pico_ip, tcp_port, uid)
+        ok, confirmed = pico_link.select_game(pico_ip, tcp_port, uid, name=_lookup_game_name(uid))
         if ok:
             return (
                 "<div class='message success'>Pico hat die Auswahl bestaetigt: "
@@ -247,7 +261,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
         game_uid = form.get("game_uid", [""])[0]
         if not uid or not game_uid:
             return "<div class='message error'>Bitte ein Spiel auswaehlen.</div>"
-        return self._link(uid, game_uid, "verknuepft")
+        return self._link(uid, game_uid, "verknuepft", name=_lookup_game_name(game_uid))
 
     def _handle_unlink_tag(self, form):
         uid = form.get("uid", [""])[0]
@@ -279,14 +293,14 @@ class Handler(http.server.BaseHTTPRequestHandler):
             return f"<div class='message success'>Farbe fuer Tag {_escape(uid)} gespeichert.</div>"
         return f"<div class='message error'>Farbe fuer Tag {_escape(uid)} konnte nicht gespeichert werden (unbekannter Tag?).</div>"
 
-    def _link(self, uid, game_uid, aktion):
+    def _link(self, uid, game_uid, aktion, name=None):
         config = pico_link.load_config()
         tcp_port = config.get("tcp_port", 5005)
         pico_ip = _resolve_pico_ip(config)
         if not pico_ip:
             return "<div class='message error'>Pico wurde im Netzwerk nicht gefunden.</div>"
 
-        if pico_link.link_tag(pico_ip, tcp_port, uid, game_uid):
+        if pico_link.link_tag(pico_ip, tcp_port, uid, game_uid, name=name):
             return f"<div class='message success'>Tag {_escape(uid)} wurde {aktion}.</div>"
         return f"<div class='message error'>Verknuepfung fuer Tag {_escape(uid)} fehlgeschlagen (unbekannter Tag?).</div>"
 

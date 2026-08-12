@@ -9,6 +9,14 @@ Ist die UID in games.db bekannt, wird das Spiel gestartet und der Start dem
 Pico bestaetigt - danach meldet der Pico dieselbe UID nicht erneut, bis ein
 anderes oder kein Tag mehr erkannt wird.
 
+Solange der Tag, mit dem das aktuell laufende Spiel gestartet wurde,
+weiterhin aufliegt, passiert bei jedem Durchlauf nichts weiter (siehe
+check_game_still_active()). Liegt er laenger nicht mehr auf oder liegt
+inzwischen ein anderer Tag auf (jeweils per CURRENT? abgefragt - der Pico
+haelt einen kurzzeitig nicht gelesenen Tag selbst schon fuer
+tag_manager.TAG_GRACE_MS als weiterhin aufliegend, siehe
+Pico/tag_manager.py), wird das Spiel automatisch beendet (stop_game()).
+
 Kennt SteamOS die IP des Pico nicht (config.json -> pico_ip leer oder
 Verbindung verloren), wird sie per UDP-Broadcast automatisch im lokalen
 Netzwerk gesucht. Die eigentliche Netzwerklogik steckt in pico_link.py,
@@ -20,7 +28,9 @@ und an einen optionalen zweiten Pico weitergereicht (siehe ../Led_Pico),
 der damit einen LED-Streifen ansteuert - unabhaengig vom Spielstart,
 komplett eigenstaendiges Geraet (led_config.json/led_link.py).
 """
+import os
 import shlex
+import signal
 import sqlite3
 import subprocess
 import sys
@@ -38,6 +48,11 @@ GAMES_DB_PATH = Path(__file__).resolve().parent / "games.db"
 _UNSET = object()
 _last_led_color = _UNSET
 _led_pico_ip = None
+
+# Per Tag gestartetes Spiel, das aktuell laeuft (siehe handle_tag()/
+# check_game_still_active()) - None, wenn keins ueber RFID gestartet
+# wurde bzw. es bereits wieder beendet ist.
+_running_game = None
 
 
 def _resolve_steam_executable():
@@ -73,23 +88,90 @@ def find_game_by_uid(uid):
 
 
 def launch_game(game):
+    """Startet ein Spiel, gibt das Popen-Objekt zurueck (oder None bei
+    Fehler/nicht installiert). Der Rueckgabewert wird in _running_game
+    gemerkt, damit stop_game() spaeter versuchen kann, genau diesen
+    Prozess zu beenden."""
     if not game["installed"] or not game["launch_command"]:
         print(f"Spiel '{game['name']}' ist nicht installiert, kann nicht gestartet werden.", flush=True)
-        return False
+        return None
 
     args = shlex.split(game["launch_command"])
     if args and args[0].lower() == "steam" and _STEAM_EXECUTABLE:
         args[0] = _STEAM_EXECUTABLE
 
     try:
-        subprocess.Popen(args)
-        return True
+        return subprocess.Popen(args)
     except OSError as e:
         print(f"Start von '{game['name']}' fehlgeschlagen: {e}", flush=True)
-        return False
+        return None
+
+
+def _find_pids_under_install_path(install_path):
+    """Linux/proc-basierte Suche nach laufenden Prozessen, deren
+    ausfuehrbare Datei oder Kommandozeile unterhalb von install_path
+    liegt. Noetig, weil 'steam -applaunch <appid>' (siehe
+    game_scanner.py) nur den bereits laufenden Steam-Client benachrichtigt
+    und sich selbst i. d. R. sofort wieder beendet - das eigentliche Spiel
+    laeuft als eigener, von Steam gestarteter Prozess. Ohne /proc (z. B.
+    lokale Tests unter Windows) liefert das eine leere Liste; dann bleibt
+    fuer stop_game() nur proc.terminate()."""
+    proc_dir = Path("/proc")
+    if not install_path or not proc_dir.is_dir():
+        return []
+
+    try:
+        target = str(Path(install_path).resolve())
+    except OSError:
+        return []
+
+    pids = []
+    for entry in proc_dir.iterdir():
+        if not entry.name.isdigit():
+            continue
+        pid = int(entry.name)
+        try:
+            if str((entry / "exe").resolve()).startswith(target):
+                pids.append(pid)
+                continue
+        except OSError:
+            pass
+        try:
+            cmdline = (entry / "cmdline").read_bytes().replace(b"\x00", b" ").decode(errors="ignore")
+            if target in cmdline:
+                pids.append(pid)
+        except OSError:
+            pass
+    return pids
+
+
+def stop_game(game, proc):
+    """Beendet ein per Tag gestartetes Spiel. Siehe
+    _find_pids_under_install_path() dazu, warum proc.terminate() allein
+    bei ueber Steam gestarteten Spielen meist nicht reicht. Gibt True
+    zurueck, wenn mindestens ein Prozess ein Beenden-Signal erhalten hat
+    (keine Garantie, dass er sich auch tatsaechlich beendet)."""
+    stopped = False
+    for pid in _find_pids_under_install_path(game["install_path"]):
+        try:
+            os.kill(pid, signal.SIGTERM)
+            stopped = True
+        except OSError:
+            pass
+
+    if proc is not None and proc.poll() is None:
+        try:
+            proc.terminate()
+            stopped = True
+        except OSError:
+            pass
+
+    return stopped
 
 
 def handle_tag(pico_ip, tcp_port, timestamp):
+    global _running_game
+
     tag_uid = pico_link.check_tag(pico_ip, tcp_port)
     if not tag_uid:
         return
@@ -100,13 +182,36 @@ def handle_tag(pico_ip, tcp_port, timestamp):
         return
 
     print(f"[{timestamp}] Tag erkannt: {game['name']} ({tag_uid})", flush=True)
-    if not launch_game(game):
+    proc = launch_game(game)
+    if proc is None:
         return
 
     if pico_link.confirm_started(pico_ip, tcp_port, tag_uid):
         print(f"[{timestamp}] Start bestaetigt an Pico: {game['name']}", flush=True)
     else:
         print(f"[{timestamp}] Konnte Start nicht an Pico bestaetigen (Tag ggf. gewechselt).", flush=True)
+
+    _running_game = {"game_uid": tag_uid, "game": game, "proc": proc}
+
+
+def check_game_still_active(current):
+    """Beendet das aktuell per Tag laufende Spiel, sobald der zugehoerige
+    Tag nicht mehr aufliegt oder durch einen anderen ersetzt wurde (siehe
+    CURRENT? / pico_link.fetch_current). Liegt derselbe Tag weiterhin auf,
+    passiert nichts. Ohne ueber RFID gestartetes Spiel ein No-Op."""
+    global _running_game
+
+    if _running_game is None:
+        return
+
+    current_game_uid = current.get("game_uid") if current else None
+    if current_game_uid == _running_game["game_uid"]:
+        return
+
+    game = _running_game["game"]
+    print(f"Tag fuer '{game['name']}' nicht mehr aufliegend oder gewechselt - beende Spiel.", flush=True)
+    stop_game(game, _running_game["proc"])
+    _running_game = None
 
 
 def resolve_led_color(current):
@@ -127,18 +232,16 @@ def resolve_led_color(current):
     return None
 
 
-def update_led(pico_ip, tcp_port):
-    """Haelt den Led_Pico auf dem Laufenden: fragt beim RFID-Pico per
-    CURRENT? den gerade aufliegenden Tag ab (unabhaengig vom einmaligen
-    TAG?-Meldezustand, der nur fuer den Spielstart gedacht ist) und
-    schickt die daraus ermittelte Farbe weiter - aber nur, wenn sie sich
-    seit dem letzten Durchlauf geaendert hat, um nicht bei jedem Takt
-    unnoetig Netzwerkverkehr zum Led_Pico zu erzeugen. Ist kein Led_Pico
-    im Netzwerk konfiguriert/erreichbar, wird das stillschweigend
-    uebersprungen - er ist optional."""
+def update_led(current):
+    """Haelt den Led_Pico auf dem Laufenden: ermittelt aus dem (von main()
+    bereits per CURRENT? abgefragten) aktuellen Tag-Status die passende
+    Farbe und schickt sie weiter - aber nur, wenn sie sich seit dem
+    letzten Durchlauf geaendert hat, um nicht bei jedem Takt unnoetig
+    Netzwerkverkehr zum Led_Pico zu erzeugen. Ist kein Led_Pico im Netzwerk
+    konfiguriert/erreichbar, wird das stillschweigend uebersprungen - er
+    ist optional."""
     global _last_led_color, _led_pico_ip
 
-    current = pico_link.fetch_current(pico_ip, tcp_port)
     color = resolve_led_color(current)
     if color == _last_led_color:
         return
@@ -186,8 +289,14 @@ def main():
             if reachable:
                 print(f"[{timestamp}] Pico erreichbar ({pico_ip})", flush=True)
                 pico_link.write_state("erreichbar", pico_ip)
+                # Erst pruefen/beenden, dann ggf. neu starten: so wird ein
+                # bereits laufendes Spiel zuverlaessig gestoppt, auch wenn
+                # im selben Durchlauf sofort ein neuer Tag mit einem
+                # anderen Spiel erkannt wird (siehe check_game_still_active).
+                current = pico_link.fetch_current(pico_ip, tcp_port)
+                check_game_still_active(current)
                 handle_tag(pico_ip, tcp_port, timestamp)
-                update_led(pico_ip, tcp_port)
+                update_led(current)
             else:
                 print(f"[{timestamp}] Pico NICHT erreichbar, versuche erneut...", flush=True)
                 pico_link.write_state("nicht_erreichbar", pico_ip)

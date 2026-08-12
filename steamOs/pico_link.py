@@ -5,16 +5,20 @@ alle paar Sekunden) als auch von der GUI (gui/gui_server.py, Spielauswahl
 senden) verwendet.
 
 Protokoll ueber TCP (Standard-Port 5005), zeilenbasiert:
-    Anfrage           Antwort
-    ----------------- -----------------
-    PING              erreichbar
-    SELECT:<uid>      OK:<uid>
-    TAG?              TAG:<uid>  oder  TAG:NONE
-    STARTED:<uid>     OK:STARTED:<uid>  oder  ERROR:mismatch
-    TAGS?             TAGS:<json-liste aller bekannten Tags>
-    LINK:<uid>:<uid2> OK:LINK:<uid>  oder  ERROR:unknown_tag
-    TAGCOLOR:<uid>:<f> OK:TAGCOLOR:<uid>  oder  ERROR:unknown_tag
-    CURRENT?          CURRENT:<json des aktuellen Tags>  oder  CURRENT:NONE
+    Anfrage                   Antwort
+    ------------------------- -----------------
+    PING                      erreichbar
+    SELECT:<uid>[:<name>]     OK:<uid>
+    TAG?                      TAG:<uid>  oder  TAG:NONE
+    STARTED:<uid>             OK:STARTED:<uid>  oder  ERROR:mismatch
+    TAGS?                     TAGS:<json-liste aller bekannten Tags>
+    LINK:<uid>:<uid2>[:<name>] OK:LINK:<uid>  oder  ERROR:unknown_tag
+    TAGCOLOR:<uid>:<f>        OK:TAGCOLOR:<uid>  oder  ERROR:unknown_tag
+    CURRENT?                  CURRENT:<json des aktuellen Tags>  oder  CURRENT:NONE
+
+Der optionale <name> bei SELECT/LINK ist der Anzeigename des Spiels, den
+der Pico fuers optionale LCD speichert (siehe Pico/tag_store.py) - ohne
+angeschlossenes LCD hat er keine Auswirkung.
 
 Discovery ueber UDP (Standard-Port 5006):
     Anfrage           Antwort
@@ -89,11 +93,13 @@ def ping_pico(ip, tcp_port, timeout=2.0):
     return _send_command(ip, tcp_port, "PING", timeout) == "erreichbar"
 
 
-def select_game(ip, tcp_port, uid, timeout=3.0):
-    """Sendet die UID des ausgewaehlten Spiels an den Pico.
+def select_game(ip, tcp_port, uid, name=None, timeout=3.0):
+    """Sendet die UID (optional mit Anzeigename fuers Pico-LCD) des
+    ausgewaehlten Spiels an den Pico.
     Gibt (True, bestaetigte_uid) zurueck, wenn der Pico exakt diese UID
     bestaetigt hat, sonst (False, Antwort-oder-None)."""
-    response = _send_command(ip, tcp_port, f"SELECT:{uid}", timeout)
+    command = f"SELECT:{uid}:{name}" if name else f"SELECT:{uid}"
+    response = _send_command(ip, tcp_port, command, timeout)
     if response and response.startswith("OK:"):
         confirmed_uid = response[len("OK:"):]
         return confirmed_uid == uid, confirmed_uid
@@ -129,11 +135,15 @@ def fetch_tags(ip, tcp_port, timeout=3.0):
     return None
 
 
-def link_tag(ip, tcp_port, uid_hex, game_uid, timeout=3.0):
+def link_tag(ip, tcp_port, uid_hex, game_uid, name=None, timeout=3.0):
     """Verknuepft (game_uid gesetzt) oder loest (game_uid leer) einen dem
     Pico bereits bekannten Tag mit einem Spiel - ohne dass der Tag dafuer
-    erneut an den Leser gehalten werden muss."""
-    response = _send_command(ip, tcp_port, f"LINK:{uid_hex}:{game_uid or ''}", timeout)
+    erneut an den Leser gehalten werden muss. name ist der optionale
+    Anzeigename fuers Pico-LCD (nur bei gesetztem game_uid sinnvoll)."""
+    command = f"LINK:{uid_hex}:{game_uid or ''}"
+    if game_uid and name:
+        command += f":{name}"
+    response = _send_command(ip, tcp_port, command, timeout)
     return response == f"OK:LINK:{uid_hex}"
 
 

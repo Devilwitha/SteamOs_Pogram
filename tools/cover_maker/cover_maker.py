@@ -5,6 +5,7 @@ Start: python cover_maker.py
 Benoetigt: Pillow (pip install pillow)
 """
 
+import json
 import sqlite3
 import subprocess
 import sys
@@ -23,13 +24,18 @@ ASSIGN_SCRIPT = SCRIPT_DIR / "assign_game.py"
 
 # Masse bleiben wie urspruenglich angefragt: Front/Rueckseite 6cm breit,
 # beide Seiten 1cm breit, gemeinsame Hoehe 10cm (in der GUI einstellbar).
+# Reihenfolge: Seite 1 | Front | Seite 2 | Rueckseite, damit das Banner
+# ueber Seite1+Front+Seite2 durchgehend bleibt (Rueckseite liegt am Ende,
+# nicht mehr in der Mitte -> kein abgetrenntes Banner-Fragment mehr).
 PANEL_DEFAULTS = [
-    {"name": "Front", "width_cm": 6.0},
     {"name": "Seite 1", "width_cm": 1.0},
-    {"name": "Rueckseite", "width_cm": 6.0},
+    {"name": "Front", "width_cm": 6.0},
     {"name": "Seite 2", "width_cm": 1.0},
+    {"name": "Rueckseite", "width_cm": 6.0},
 ]
-BACK_PANEL_INDEX = 2  # "Rueckseite" ist standardmaessig im Rueckseiten-Modus
+FRONT_PANEL_INDEX = 1
+BACK_PANEL_INDEX = 3  # "Rueckseite" ist standardmaessig im Rueckseiten-Modus
+WRAP_FRONT_DEFAULT_INDEX = 2  # "Seite 2" zeigt standardmaessig die Fortsetzung des Frontbilds
 
 MODE_CROP = "Zuschneiden (Ausschnitt waehlen)"
 MODE_STRETCH = "Fuellen (Groesse anpassen)"
@@ -282,52 +288,63 @@ class Panel:
         self.input_kbm = False
         self.input_controller = False
 
+        # Merkt sich unabhaengig von der aktuellen Sortierung, welches Panel
+        # das "Front"-Bild liefert (fuer den Wrap-Effekt auf Nachbarpanels).
+        self.is_front = (index == FRONT_PANEL_INDEX)
+
         self.frame = ttk.LabelFrame(parent, text=PANEL_DEFAULTS[index]["name"])
         self.frame.grid(row=0, column=index, padx=5, pady=5, sticky="nsew")
 
+        self.drag_handle = ttk.Label(
+            self.frame, text="☰ Ziehen zum Sortieren", foreground="#888", cursor="fleur", anchor="center"
+        )
+        self.drag_handle.grid(row=0, column=0, columnspan=2, pady=(2, 4), sticky="ew")
+        self.drag_handle.bind("<ButtonPress-1>", self._on_drag_handle_press)
+        self.drag_handle.bind("<ButtonRelease-1>", self._on_drag_handle_release)
+
         self.name_var = tk.StringVar(value=PANEL_DEFAULTS[index]["name"])
         ttk.Entry(self.frame, textvariable=self.name_var, width=14).grid(
-            row=0, column=0, columnspan=2, pady=2
+            row=1, column=0, columnspan=2, pady=2
         )
         self.name_var.trace_add("write", lambda *_: self._on_name_change())
 
         self.path_label = ttk.Label(self.frame, text="kein Bild", width=20, anchor="w")
-        self.path_label.grid(row=1, column=0, columnspan=2, pady=2)
+        self.path_label.grid(row=2, column=0, columnspan=2, pady=2)
 
         ttk.Button(self.frame, text="Bild waehlen", command=self.choose_image).grid(
-            row=2, column=0, columnspan=2, pady=2
+            row=3, column=0, columnspan=2, pady=2
         )
 
         width_row = ttk.Frame(self.frame)
-        width_row.grid(row=3, column=0, columnspan=2, pady=2)
+        width_row.grid(row=4, column=0, columnspan=2, pady=2)
         ttk.Label(width_row, text="Breite (cm):").pack(side="left")
         self.width_var = tk.StringVar(value=str(PANEL_DEFAULTS[index]["width_cm"]))
         ttk.Entry(width_row, textvariable=self.width_var, width=6).pack(side="left")
         self.width_var.trace_add("write", lambda *_: self.app.update_preview())
 
-        ttk.Label(self.frame, text="Modus:").grid(row=4, column=0, columnspan=2)
+        ttk.Label(self.frame, text="Modus:").grid(row=5, column=0, columnspan=2)
         self.mode_var = tk.StringVar(value=FIT_MODES[0])
         mode_combo = ttk.Combobox(
             self.frame, textvariable=self.mode_var, values=FIT_MODES, state="readonly", width=22
         )
-        mode_combo.grid(row=5, column=0, columnspan=2, pady=2)
+        mode_combo.grid(row=6, column=0, columnspan=2, pady=2)
         mode_combo.bind("<<ComboboxSelected>>", lambda *_: self._on_mode_change())
 
         self.canvas = tk.Canvas(
             self.frame, width=self.THUMB_MAX, height=self.THUMB_MAX, bg="#ddd", cursor="fleur"
         )
-        self.canvas.grid(row=6, column=0, columnspan=2, pady=4)
+        self.canvas.grid(row=7, column=0, columnspan=2, pady=4)
         self.canvas.bind("<ButtonPress-1>", self._on_drag_start)
         self.canvas.bind("<B1-Motion>", self._on_drag_move)
 
         self.hint_label = ttk.Label(self.frame, text="", foreground="#666", wraplength=120, justify="center")
-        self.hint_label.grid(row=7, column=0, columnspan=2)
+        self.hint_label.grid(row=8, column=0, columnspan=2)
         self._update_hint()
 
         self.back_mode_var = tk.BooleanVar(value=(index == BACK_PANEL_INDEX))
         ttk.Checkbutton(
             self.frame, text="Ist Rueckseite", variable=self.back_mode_var, command=self._on_back_mode_change
-        ).grid(row=8, column=0, columnspan=2, pady=(6, 0))
+        ).grid(row=9, column=0, columnspan=2, pady=(6, 0))
 
         self.back_edit_btn = ttk.Button(
             self.frame,
@@ -335,7 +352,16 @@ class Panel:
             command=self.open_back_dialog,
             state=("normal" if self.back_mode_var.get() else "disabled"),
         )
-        self.back_edit_btn.grid(row=9, column=0, columnspan=2, pady=(2, 4))
+        self.back_edit_btn.grid(row=10, column=0, columnspan=2, pady=(2, 4))
+
+        self.wrap_front_var = tk.BooleanVar(value=(index == WRAP_FRONT_DEFAULT_INDEX))
+        if not self.is_front:
+            ttk.Checkbutton(
+                self.frame,
+                text="Frontbild fortsetzen (Wrap)",
+                variable=self.wrap_front_var,
+                command=self.app.update_preview,
+            ).grid(row=11, column=0, columnspan=2, pady=(0, 4))
 
     def _on_name_change(self):
         self.frame.configure(text=self.name_var.get() or f"Panel {self.index + 1}")
@@ -344,6 +370,18 @@ class Panel:
     def _on_mode_change(self):
         self._update_hint()
         self.app.update_preview()
+
+    def _on_drag_handle_press(self, _event):
+        self.app.drag_panel = self
+
+    def _on_drag_handle_release(self, event):
+        dragged = self.app.drag_panel
+        self.app.drag_panel = None
+        if dragged is None:
+            return
+        target_index = self.app.panel_index_at_x(event.x_root)
+        if target_index is not None:
+            self.app.reorder_panels(dragged, target_index)
 
     def _on_back_mode_change(self):
         self.back_edit_btn.configure(state="normal" if self.back_mode_var.get() else "disabled")
@@ -590,6 +628,7 @@ class CoverMakerApp:
         self.last_cover_id = None
         self.banner_image = None
         self.banner_path = None
+        self.drag_panel = None
 
         settings_frame = ttk.Frame(root)
         settings_frame.pack(fill="x", padx=10, pady=(10, 0))
@@ -633,16 +672,19 @@ class CoverMakerApp:
 
         ttk.Label(
             banner_frame,
-            text="Das Banner ueberlagert oben alle Panels ausser denen, die als \"Rueckseite\" markiert sind.",
+            text=(
+                "Das Banner ueberlagert oben alle Panels ausser denen, die als \"Rueckseite\" markiert sind. "
+                "Panels koennen per Ziehen am “☰”-Griff neu sortiert werden."
+            ),
             foreground="#666",
         ).pack(fill="x", padx=5, pady=(0, 5))
 
-        panels_frame = ttk.Frame(root)
-        panels_frame.pack(fill="x", padx=10, pady=10)
+        self.panels_frame = ttk.Frame(root)
+        self.panels_frame.pack(fill="x", padx=10, pady=10)
 
-        self.panels = [Panel(panels_frame, i, self) for i in range(4)]
+        self.panels = [Panel(self.panels_frame, i, self) for i in range(4)]
         for i in range(4):
-            panels_frame.columnconfigure(i, weight=1)
+            self.panels_frame.columnconfigure(i, weight=1)
 
         preview_frame = ttk.LabelFrame(root, text="Gesamtvorschau")
         preview_frame.pack(fill="both", expand=True, padx=10, pady=(0, 10))
@@ -656,6 +698,9 @@ class CoverMakerApp:
             button_frame, text="Spiel zuweisen...", command=self.open_assign_tool, state="disabled"
         )
         self.assign_button.pack(side="right", padx=(0, 10))
+        ttk.Button(button_frame, text="Projekt laden...", command=self.open_project_dialog).pack(
+            side="left"
+        )
 
         self._preview_photo = None
         self.update_preview()
@@ -728,6 +773,35 @@ class CoverMakerApp:
         self.banner_image = image
         self.banner_path = file_path
         self.banner_path_label.configure(text=Path(file_path).name)
+        self.update_preview()
+
+    # -- Panel-Reihenfolge (Drag & Drop) --------------------------------
+    def panel_index_at_x(self, x_root):
+        """Ermittelt anhand einer Bildschirm-X-Koordinate, ueber welchem
+        Panel (bzw. welcher Panel-Luecke) losgelassen wurde."""
+        best_index = None
+        best_dist = None
+        for i, panel in enumerate(self.panels):
+            fx = panel.frame.winfo_rootx()
+            fw = panel.frame.winfo_width()
+            center = fx + fw / 2
+            dist = abs(x_root - center)
+            if best_dist is None or dist < best_dist:
+                best_dist = dist
+                best_index = i
+        return best_index
+
+    def reorder_panels(self, moved_panel, target_index):
+        if moved_panel not in self.panels:
+            return
+        current_index = self.panels.index(moved_panel)
+        if target_index is None or target_index == current_index:
+            return
+        self.panels.pop(current_index)
+        self.panels.insert(target_index, moved_panel)
+        for i, panel in enumerate(self.panels):
+            panel.index = i
+            panel.frame.grid_configure(column=i)
         self.update_preview()
 
     # -- Rendering -----------------------------------------------------
@@ -927,12 +1001,64 @@ class CoverMakerApp:
 
         return canvas
 
+    def _front_panel(self):
+        return next((p for p in self.panels if p.is_front), None)
+
+    def _banner_reserved_px(self, h_px: int) -> int:
+        """Wie viele Pixel oben fuer das Banner freigehalten werden muessen,
+        damit es das Artwork nicht ueberdeckt/abschneidet."""
+        if self.banner_image is None:
+            return 0
+        banner_cm = self._banner_height_cm()
+        height_cm = self._height_cm()
+        if banner_cm <= 0 or height_cm <= 0:
+            return 0
+        ratio = min(0.9, banner_cm / height_cm)
+        return round(h_px * ratio)
+
     def render_panel(self, panel: Panel, w_px: int, h_px: int) -> Image.Image:
         if panel.back_mode_var.get():
             return self.render_back_panel(panel, w_px, h_px)
-        if panel.pil_image is None:
-            return Image.new("RGB", (w_px, h_px), "white")
-        return self._render_source(panel.pil_image, panel.mode_var.get(), w_px, h_px, panel.center_x, panel.center_y)
+
+        # Das Banner ueberlagert spaeter den oberen Rand dieses Panels ->
+        # Artwork um die Bannerhoehe nach unten schieben, damit oben nichts
+        # vom eigentlichen Bild verdeckt/abgeschnitten wird. Der sichtbare
+        # Bildausschnitt kann weiterhin per Ziehen (center_x/center_y) im
+        # verbleibenden Bereich verschoben werden.
+        banner_h = self._banner_reserved_px(h_px)
+        content_h = max(1, h_px - banner_h)
+
+        front_panel = self._front_panel()
+        if (
+            panel.wrap_front_var.get()
+            and front_panel is not None
+            and front_panel is not panel
+            and front_panel.pil_image is not None
+            and not front_panel.back_mode_var.get()
+        ):
+            # Naeherung fuer Einzel-Thumbnails: eigener Ausschnitt des
+            # Frontbilds. Im Gesamtcover wird stattdessen ein gemeinsamer,
+            # nahtlos zusammenhaengender Ausschnitt verwendet (siehe unten).
+            content = self._render_source(
+                front_panel.pil_image, front_panel.mode_var.get(), w_px, content_h,
+                front_panel.center_x, front_panel.center_y,
+            )
+        elif panel.pil_image is None:
+            content = Image.new("RGB", (w_px, content_h), "white")
+        else:
+            content = self._render_source(
+                panel.pil_image, panel.mode_var.get(), w_px, content_h, panel.center_x, panel.center_y
+            )
+
+        if banner_h <= 0:
+            return content
+
+        canvas = Image.new("RGB", (w_px, h_px), "white")
+        if self.banner_image is not None:
+            banner_preview = self._render_source(self.banner_image, MODE_STRETCH, w_px, banner_h)
+            canvas.paste(banner_preview, (0, 0))
+        canvas.paste(content, (0, banner_h))
+        return canvas
 
     def build_combined_image(self):
         dpi = self._dpi()
@@ -941,10 +1067,59 @@ class CoverMakerApp:
         total_width_px = sum(widths_px)
 
         canvas = Image.new("RGB", (total_width_px, height_px), "white")
+
+        # Panels, die "Frontbild fortsetzen" aktiviert haben und direkt neben
+        # dem Front-Panel liegen, bekommen keinen eigenen Ausschnitt, sondern
+        # ein Stueck eines gemeinsam berechneten, nahtlosen Ausschnitts - so
+        # wirkt es wie ein umlaufendes (Wrap-)Cover statt zweier Einzelbilder.
+        wrap_slices = {}
+        wrap_image = None
+        front_panel = self._front_panel()
+        if front_panel is not None and front_panel.pil_image is not None and not front_panel.back_mode_var.get():
+            front_idx = self.panels.index(front_panel)
+            left_idx = front_idx - 1
+            right_idx = front_idx + 1
+            left_panel = self.panels[left_idx] if left_idx >= 0 else None
+            right_panel = self.panels[right_idx] if right_idx < len(self.panels) else None
+            left_wraps = bool(left_panel and left_panel.wrap_front_var.get() and not left_panel.back_mode_var.get())
+            right_wraps = bool(right_panel and right_panel.wrap_front_var.get() and not right_panel.back_mode_var.get())
+            if left_wraps or right_wraps:
+                left_w = widths_px[left_idx] if left_wraps else 0
+                right_w = widths_px[right_idx] if right_wraps else 0
+                total_w = left_w + widths_px[front_idx] + right_w
+
+                # Gleiche Banner-Reservierung wie in render_panel, aber auf
+                # den gesamten Wrap-Ausschnitt angewendet, damit die Naht
+                # zwischen den Panels weiterhin nahtlos bleibt.
+                banner_h = self._banner_reserved_px(height_px)
+                wrap_content_h = max(1, height_px - banner_h)
+                wrap_content = self._render_source(
+                    front_panel.pil_image, front_panel.mode_var.get(), total_w, wrap_content_h,
+                    front_panel.center_x, front_panel.center_y,
+                )
+                if banner_h > 0:
+                    wrap_image = Image.new("RGB", (total_w, height_px), "white")
+                    if self.banner_image is not None:
+                        banner_preview = self._render_source(self.banner_image, MODE_STRETCH, total_w, banner_h)
+                        wrap_image.paste(banner_preview, (0, 0))
+                    wrap_image.paste(wrap_content, (0, banner_h))
+                else:
+                    wrap_image = wrap_content
+
+                if left_wraps:
+                    wrap_slices[left_idx] = (0, left_w)
+                wrap_slices[front_idx] = (left_w, widths_px[front_idx])
+                if right_wraps:
+                    wrap_slices[right_idx] = (left_w + widths_px[front_idx], right_w)
+
         x_offset = 0
         banner_segments = []
-        for panel, w_px in zip(self.panels, widths_px):
-            piece = self.render_panel(panel, w_px, height_px)
+        for i, (panel, w_px) in enumerate(zip(self.panels, widths_px)):
+            if wrap_image is not None and i in wrap_slices:
+                sx, sw = wrap_slices[i]
+                piece = wrap_image.crop((sx, 0, sx + sw, height_px))
+            else:
+                piece = self.render_panel(panel, w_px, height_px)
             canvas.paste(piece, (x_offset, 0))
             if not panel.back_mode_var.get():
                 banner_segments.append((x_offset, w_px))
@@ -983,6 +1158,13 @@ class CoverMakerApp:
             for panel in self.panels:
                 panel.redraw_thumbnail()
 
+    def _draw_dashed_vline(self, draw, x, y0, y1, dash_len, gap_len, width, fill):
+        y = y0
+        while y < y1:
+            y_end = min(y + dash_len, y1)
+            draw.line([x, y, x, y_end], fill=fill, width=width)
+            y += dash_len + gap_len
+
     def export_image(self):
         combined = self.build_combined_image()
         path = filedialog.asksaveasfilename(
@@ -999,6 +1181,48 @@ class CoverMakerApp:
         except Exception as exc:
             messagebox.showerror("Fehler", f"Speichern fehlgeschlagen:\n{exc}")
             return
+
+        # Schneidelinien-Referenzbild separat speichern: das eigentliche
+        # Cover wird spaeter 1:1 als Spiel-Cover verwendet und soll daher
+        # sauber bleiben (kein eingebrannter Rahmen im echten Artwork).
+        # Zusaetzlich zum durchgezogenen Schneiderand werden gestrichelte
+        # Faltlinien an jeder Panel-Grenze eingezeichnet.
+        info_extra = ""
+        try:
+            cutline_image = combined.copy()
+            draw = ImageDraw.Draw(cutline_image)
+            line_px = max(1, round(dpi / 300))
+            draw.rectangle(
+                [0, 0, cutline_image.width - 1, cutline_image.height - 1],
+                outline="black",
+                width=line_px,
+            )
+
+            widths_px = [cm_to_px(p.width_cm(), dpi) for p in self.panels]
+            dash_len = max(4, round(dpi / 300 * 10))
+            gap_len = max(3, round(dpi / 300 * 6))
+            fold_cursor = 0
+            for w_px in widths_px[:-1]:
+                fold_cursor += w_px
+                self._draw_dashed_vline(
+                    draw, fold_cursor, 0, cutline_image.height, dash_len, gap_len, line_px, "black"
+                )
+
+            cutline_path = Path(path).with_name(f"{Path(path).stem}_schneidelinien{Path(path).suffix}")
+            cutline_image.save(cutline_path, dpi=(dpi, dpi))
+            info_extra += f"\nSchneide-/Faltlinien-Referenz: {cutline_path.name}"
+        except Exception as exc:
+            messagebox.showwarning("Hinweis", f"Schneidelinien-Referenzbild konnte nicht gespeichert werden:\n{exc}")
+
+        # Projektdatei speichern, damit das Cover spaeter mit allen
+        # Einstellungen (Bilder, Zuschnitt, Rueckseiten-Text, Banner, ...)
+        # wieder geladen und weiterbearbeitet werden kann.
+        try:
+            project_path = Path(path).with_name(f"{Path(path).stem}.covermaker.json")
+            self.save_project_file(project_path)
+            info_extra += f"\nProjektdatei: {project_path.name}"
+        except Exception as exc:
+            messagebox.showwarning("Hinweis", f"Projektdatei konnte nicht gespeichert werden:\n{exc}")
 
         resolved_path = str(Path(path).resolve())
         conn = sqlite3.connect(DB_PATH)
@@ -1023,7 +1247,156 @@ class CoverMakerApp:
             conn.close()
 
         self.assign_button.configure(state="normal")
-        messagebox.showinfo("Gespeichert", f"Cover gespeichert unter:\n{path}\n\n(In der Datenbank vermerkt.)")
+        messagebox.showinfo(
+            "Gespeichert", f"Cover gespeichert unter:\n{path}\n\n(In der Datenbank vermerkt.){info_extra}"
+        )
+
+    # -- Projekt speichern/laden ----------------------------------------
+    def serialize_state(self) -> dict:
+        return {
+            "format": "cover_maker_project",
+            "version": 1,
+            "height_cm": self.height_var.get(),
+            "dpi": self.dpi_var.get(),
+            "banner_path": self.banner_path,
+            "banner_height_cm": self.banner_height_var.get(),
+            "panels": [self._serialize_panel(p) for p in self.panels],
+        }
+
+    def _serialize_panel(self, panel: Panel) -> dict:
+        return {
+            "name": panel.name_var.get(),
+            "image_path": panel.image_path,
+            "center_x": panel.center_x,
+            "center_y": panel.center_y,
+            "width_cm": panel.width_var.get(),
+            "mode": panel.mode_var.get(),
+            "is_front": panel.is_front,
+            "back_mode": panel.back_mode_var.get(),
+            "wrap_front": panel.wrap_front_var.get(),
+            "art_ratio_percent": panel.art_ratio_percent,
+            "min_title": panel.min_title,
+            "rec_title": panel.rec_title,
+            "min_text_content": panel.min_text_content,
+            "rec_text_content": panel.rec_text_content,
+            "logo_paths": list(panel.logo_paths),
+            "show_compat": panel.show_compat,
+            "steamdeck_rating": panel.steamdeck_rating,
+            "steammachine_rating": panel.steammachine_rating,
+            "input_kbm": panel.input_kbm,
+            "input_controller": panel.input_controller,
+        }
+
+    def save_project_file(self, path):
+        data = self.serialize_state()
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
+
+    def open_project_dialog(self):
+        path = filedialog.askopenfilename(
+            title="Projekt laden",
+            filetypes=[("Cover-Maker-Projekt", "*.json"), ("Alle Dateien", "*.*")],
+        )
+        if not path:
+            return
+        self.load_project_file(path)
+
+    def load_project_file(self, path):
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+        except Exception as exc:
+            messagebox.showerror("Fehler", f"Projekt konnte nicht geladen werden:\n{exc}")
+            return
+
+        panels_data = data.get("panels", [])
+        if len(panels_data) != len(self.panels):
+            messagebox.showerror("Fehler", "Projektdatei passt nicht zur Anzahl der Panels.")
+            return
+
+        self.height_var.set(str(data.get("height_cm", self.height_var.get())))
+        self.dpi_var.set(str(data.get("dpi", self.dpi_var.get())))
+        self.banner_height_var.set(str(data.get("banner_height_cm", self.banner_height_var.get())))
+
+        missing_files = []
+        banner_path = data.get("banner_path")
+        if banner_path:
+            try:
+                image = Image.open(banner_path)
+                image.load()
+                self.banner_image = image
+                self.banner_path = banner_path
+                self.banner_path_label.configure(text=Path(banner_path).name)
+            except Exception:
+                self.banner_image = None
+                self.banner_path = None
+                self.banner_path_label.configure(text="kein Banner")
+                missing_files.append(banner_path)
+        else:
+            self.banner_image = None
+            self.banner_path = None
+            self.banner_path_label.configure(text="kein Banner")
+
+        for panel, pdata in zip(self.panels, panels_data):
+            self._apply_panel_state(panel, pdata, missing_files)
+
+        self.update_preview()
+
+        if missing_files:
+            messagebox.showwarning(
+                "Hinweis",
+                "Folgende Dateien wurden nicht gefunden und muessen neu ausgewaehlt werden:\n"
+                + "\n".join(missing_files),
+            )
+
+    def _apply_panel_state(self, panel: Panel, pdata: dict, missing_files: list):
+        panel.name_var.set(pdata.get("name", panel.name_var.get()))
+        panel.width_var.set(str(pdata.get("width_cm", panel.width_var.get())))
+        panel.mode_var.set(pdata.get("mode", panel.mode_var.get()))
+        panel._update_hint()
+
+        panel.is_front = bool(pdata.get("is_front", panel.is_front))
+        panel.back_mode_var.set(bool(pdata.get("back_mode", panel.back_mode_var.get())))
+        panel.back_edit_btn.configure(state="normal" if panel.back_mode_var.get() else "disabled")
+        panel.wrap_front_var.set(bool(pdata.get("wrap_front", panel.wrap_front_var.get())))
+
+        panel.center_x = float(pdata.get("center_x", panel.center_x))
+        panel.center_y = float(pdata.get("center_y", panel.center_y))
+        panel.art_ratio_percent = float(pdata.get("art_ratio_percent", panel.art_ratio_percent))
+        panel.min_title = pdata.get("min_title", panel.min_title)
+        panel.rec_title = pdata.get("rec_title", panel.rec_title)
+        panel.min_text_content = pdata.get("min_text_content", panel.min_text_content)
+        panel.rec_text_content = pdata.get("rec_text_content", panel.rec_text_content)
+        panel.show_compat = bool(pdata.get("show_compat", panel.show_compat))
+        panel.steamdeck_rating = pdata.get("steamdeck_rating", panel.steamdeck_rating)
+        panel.steammachine_rating = pdata.get("steammachine_rating", panel.steammachine_rating)
+        panel.input_kbm = bool(pdata.get("input_kbm", panel.input_kbm))
+        panel.input_controller = bool(pdata.get("input_controller", panel.input_controller))
+
+        panel.pil_image = None
+        panel.image_path = None
+        panel.path_label.configure(text="kein Bild")
+        image_path = pdata.get("image_path")
+        if image_path:
+            try:
+                image = Image.open(image_path)
+                image.load()
+                panel.pil_image = image
+                panel.image_path = image_path
+                panel.path_label.configure(text=Path(image_path).name)
+            except Exception:
+                missing_files.append(image_path)
+
+        panel.logo_paths = []
+        panel.logos = []
+        for logo_path in pdata.get("logo_paths", []):
+            try:
+                logo_img = Image.open(logo_path)
+                logo_img.load()
+                panel.logo_paths.append(logo_path)
+                panel.logos.append(logo_img)
+            except Exception:
+                missing_files.append(logo_path)
 
     def open_assign_tool(self):
         if self.last_cover_id is None:

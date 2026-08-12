@@ -195,6 +195,39 @@ Takt zusaetzlich Folgendes:
    sonst aus) an einen optionalen [Led_Pico](../Led_Pico) weitergereicht -
    nur wenn sie sich seit dem letzten Takt geaendert hat.
 
+### Automatisches Beenden bei entferntem/gewechseltem Tag
+
+Dieselbe `CURRENT?`-Abfrage aus Schritt 4 wird auch genutzt, um ein per
+Tag gestartetes Spiel automatisch wieder zu beenden (`check_game_still_active()`
+in `pico_client.py`):
+
+- Liegt der Tag, mit dem das laufende Spiel gestartet wurde, weiterhin auf
+  (auch mit gelegentlichen Lesefehlern - der Pico toleriert das bereits
+  selbst bis zu `tag_manager.TAG_GRACE_MS`, Standard 3 Sekunden, siehe
+  `Pico/README.md`), passiert nichts.
+- Liegt er laenger nicht mehr auf, oder liegt inzwischen ein anderer Tag
+  auf, wird das Spiel beendet, bevor (falls zutreffend) das neue Spiel
+  gestartet wird.
+- **Wichtiger Hinweis zu `steam -applaunch <appid>`:** Dieser Befehl
+  benachrichtigt nur den bereits laufenden Steam-Client und beendet sich
+  selbst meist sofort wieder - das eigentliche Spiel laeuft als eigener,
+  von Steam gestarteter Prozess. Ein simples `terminate()` auf den beim
+  Start erzeugten Prozess wuerde das Spiel selbst also i. d. R. **nicht**
+  stoppen. `stop_game()` sucht deshalb zusaetzlich (Linux/`/proc`) nach
+  laufenden Prozessen unterhalb von `install_path` des Spiels und schickt
+  diesen `SIGTERM`. Das ist ein Best-Effort-Ansatz (kein offizieller
+  Steam-Mechanismus) - bei Spielen mit ungewoehnlicher Prozessstruktur
+  (z. B. mehrere unabhaengige Prozesse ausserhalb von `install_path`,
+  manche Proton-Spiele) kann das Beenden unvollstaendig bleiben.
+
+Die worst-case Verzoegerung zwischen tatsaechlichem Entfernen des Tags und
+dem Beenden des Spiels ist die Summe aus `tag_manager.TAG_GRACE_MS` (Pico,
+Standard 3 s) und `interval_seconds` (SteamOS-Poll-Takt, Standard 3 s) -
+also bis zu ca. 6 Sekunden. Fuer eine schnellere Reaktion beide Werte
+entsprechend verkleinern (Kompromiss: kleinere Werte reagieren schneller,
+tolerieren aber weniger Lesefehler/Netzwerk-Jitter, bevor faelschlich ein
+laufendes Spiel beendet wird).
+
 ## Konfiguration des Led_Pico (`led_config.json`)
 
 ```json
