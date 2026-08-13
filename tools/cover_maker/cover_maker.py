@@ -17,7 +17,23 @@ import tkinter as tk
 from pathlib import Path
 from tkinter import ttk, filedialog, messagebox
 
-from PIL import Image, ImageDraw, ImageFont, ImageTk, ImageOps
+from PIL import Image, ImageDraw, ImageTk, ImageOps
+
+import cover_render
+from cover_render import (
+    MODE_CROP,
+    MODE_STRETCH,
+    MODE_CONTAIN,
+    FIT_MODES,
+    DEFAULT_REQUIREMENTS_TEXT,
+    DEFAULT_MIN_TITLE,
+    DEFAULT_REC_TITLE,
+    RATING_OPTIONS,
+    RATING_COLORS,
+    CONSOLE_OPTIONS,
+    cm_to_px,
+    load_font,
+)
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 DB_PATH = SCRIPT_DIR / "covers.db"
@@ -38,34 +54,124 @@ FRONT_PANEL_INDEX = 1
 BACK_PANEL_INDEX = 3  # "Rueckseite" ist standardmaessig im Rueckseiten-Modus
 WRAP_FRONT_DEFAULT_INDEX = 2  # "Seite 2" zeigt standardmaessig die Fortsetzung des Frontbilds
 
-MODE_CROP = "Zuschneiden (Ausschnitt waehlen)"
-MODE_STRETCH = "Fuellen (Groesse anpassen)"
-MODE_CONTAIN = "Einpassen (mit Rand)"
-FIT_MODES = [MODE_CROP, MODE_STRETCH, MODE_CONTAIN]
-
 PREVIEW_MAX_W = 900
 PREVIEW_MAX_H = 400
 
-DEFAULT_REQUIREMENTS_TEXT = "OS: \nProcessor: \nMemory: \nGraphics: \nStorage: "
-DEFAULT_MIN_TITLE = "Minimum"
-DEFAULT_REC_TITLE = "Empfohlen"
-
-RATING_OPTIONS = ["Nicht bewertet", "Verifiziert", "Spielbar", "Nicht unterstuetzt"]
-RATING_COLORS = {
-    "Nicht bewertet": "#8a8a8a",
-    "Verifiziert": "#1a9c4b",
-    "Spielbar": "#c9a227",
-    "Nicht unterstuetzt": "#b3261e",
-}
-
-CONSOLE_OPTIONS = ["Steam Deck", "Steam Machine", "Beide", "Allgemein"]
 BANNER_TEMPLATES_DIR = SCRIPT_DIR / "banner_templates"
 
-_FONT_CACHE = {}
+# Einheitliches Dark-/HUD-("Game-Style")-Design, uebernommen aus den
+# HTML-Oberflaechen des Projekts (steamOs/gui/index.html, Pico/*.html):
+# dieselben Hex-Werte wie dort in den CSS-Variablen --bg/--panel/--cyan/
+# --magenta/... sowie dieselbe Sprache (dunkler Grund, Cyan als Primaer-,
+# Magenta als Sekundaer-/Abbrechen-Akzent, GROSSGESCHRIEBENE HUD-Titel,
+# feines Raster im Hintergrund), damit Desktop-Tool und Web-GUI optisch
+# einheitlich wirken.
+THEME = {
+    "bg": "#080b10",
+    "panel": "#11151d",
+    "panel2": "#161c27",
+    "border": "#232c3d",
+    "input_bg": "#0c1017",
+    "cyan": "#00e5ff",
+    "cyan_dim": "#0891a8",
+    "magenta": "#ff2e97",
+    "magenta_dim": "#a8125f",
+    "green": "#39ff8c",
+    "amber": "#ffb238",
+    "red": "#ff4d6d",
+    "text": "#e8edf5",
+    "dim": "#7686a0",
+    "on_cyan": "#04141a",
+    "grid_line": "#161c27",
+}
+FONT_BASE = ("Segoe UI", 9)
+FONT_BOLD = ("Segoe UI", 9, "bold")
+FONT_HUD = ("Segoe UI", 8, "bold")
 
 
-def cm_to_px(cm: float, dpi: int) -> int:
-    return max(1, round(cm / 2.54 * dpi))
+def apply_theme(root):
+    """Faerbt die gesamte Tk/ttk-Oberflaeche im selben Dark-/HUD-Stil wie
+    die HTML-Seiten des Projekts (dunkler Grund, Cyan als Primaer-, Magenta
+    als Sekundaer-/Abbrechen-Akzent)."""
+    t = THEME
+    root.configure(bg=t["panel"])
+
+    style = ttk.Style(root)
+    style.theme_use("clam")
+
+    style.configure(".", background=t["panel"], foreground=t["text"],
+                     fieldbackground=t["input_bg"], bordercolor=t["border"],
+                     darkcolor=t["panel"], lightcolor=t["panel2"],
+                     troughcolor=t["panel2"], font=FONT_BASE)
+
+    style.configure("TFrame", background=t["panel"])
+    style.configure("TLabel", background=t["panel"], foreground=t["text"])
+    style.configure("Dim.TLabel", background=t["panel"], foreground=t["dim"])
+    style.configure("Hud.TLabel", background=t["panel"], foreground=t["cyan_dim"], font=FONT_HUD)
+    style.configure("Field.TLabel", background=t["panel"], foreground=t["dim"], font=FONT_HUD)
+
+    style.configure("TLabelframe", background=t["panel"], bordercolor=t["border"],
+                     relief="solid", borderwidth=1)
+    style.configure("TLabelframe.Label", background=t["panel"], foreground=t["cyan"], font=FONT_BOLD)
+
+    style.configure("TSeparator", background=t["border"])
+
+    style.configure("TCheckbutton", background=t["panel"], foreground=t["text"], focuscolor=t["panel"])
+    style.map("TCheckbutton",
+              background=[("active", t["panel"])],
+              foreground=[("disabled", t["dim"])])
+
+    style.configure("TEntry", fieldbackground=t["input_bg"], foreground=t["text"],
+                     bordercolor=t["border"], insertcolor=t["cyan"], padding=4)
+    style.map("TEntry", bordercolor=[("focus", t["cyan"])])
+
+    style.configure("TCombobox", fieldbackground=t["input_bg"], background=t["input_bg"],
+                     foreground=t["text"], arrowcolor=t["cyan"], bordercolor=t["border"], padding=3)
+    style.map("TCombobox",
+              fieldbackground=[("readonly", t["input_bg"])],
+              foreground=[("readonly", t["text"])],
+              bordercolor=[("focus", t["cyan"])])
+    root.option_add("*TCombobox*Listbox.background", t["input_bg"])
+    root.option_add("*TCombobox*Listbox.foreground", t["text"])
+    root.option_add("*TCombobox*Listbox.selectBackground", t["cyan_dim"])
+    root.option_add("*TCombobox*Listbox.selectForeground", t["on_cyan"])
+
+    # Primaerknopf: Cyan, GROSSGESCHRIEBEN und fett - analog zu <button> in
+    # den HTML-Seiten (dort per text-transform:uppercase/font-weight:700).
+    style.configure("TButton", background=t["cyan_dim"], foreground=t["on_cyan"],
+                     bordercolor=t["cyan"], focuscolor=t["panel"], font=FONT_BOLD,
+                     padding=(10, 6), relief="flat")
+    style.map("TButton",
+              background=[("active", t["cyan"]), ("disabled", t["border"])],
+              foreground=[("disabled", t["dim"])])
+
+    # Sekundaer-/Abbrechen-/Loeschen-Knopf: Magenta, analog zu button.secondary.
+    style.configure("Secondary.TButton", background=t["magenta_dim"], foreground=t["text"],
+                     bordercolor=t["magenta"], focuscolor=t["panel"], font=FONT_BOLD,
+                     padding=(10, 6), relief="flat")
+    style.map("Secondary.TButton",
+              background=[("active", t["magenta"]), ("disabled", t["border"])],
+              foreground=[("disabled", t["dim"])])
+
+    return style
+
+
+def draw_hud_grid(canvas, width=None, height=None):
+    """Zeichnet ein feines Punkt-/Linienraster auf einen Canvas-Hintergrund,
+    als Anlehnung an das repeating-linear-gradient-Rasterpattern hinter dem
+    body-Element der HTML-Seiten. Rein dekorativ, liegt hinter allen anderen
+    Canvas-Inhalten."""
+    step = 26
+    w = width if width is not None else canvas.winfo_width()
+    h = height if height is not None else canvas.winfo_height()
+    if w <= 1 or h <= 1:
+        return
+    canvas.delete("hud_grid")
+    for x in range(0, w, step):
+        canvas.create_line(x, 0, x, h, fill=THEME["grid_line"], tags="hud_grid")
+    for y in range(0, h, step):
+        canvas.create_line(0, y, w, y, fill=THEME["grid_line"], tags="hud_grid")
+    canvas.tag_lower("hud_grid")
 
 
 def _localize_asset(src_path, dest_dir: Path):
@@ -104,27 +210,6 @@ def _localize_asset(src_path, dest_dir: Path):
     return str(dest.resolve())
 
 
-def load_font(bold: bool, size: int):
-    size = max(6, size)
-    key = (bold, size)
-    if key in _FONT_CACHE:
-        return _FONT_CACHE[key]
-
-    candidates = ["arialbd.ttf", "segoeuib.ttf"] if bold else ["arial.ttf", "segoeui.ttf"]
-    font = None
-    for name in candidates:
-        try:
-            font = ImageFont.truetype(name, size)
-            break
-        except OSError:
-            continue
-    if font is None:
-        font = ImageFont.load_default()
-
-    _FONT_CACHE[key] = font
-    return font
-
-
 def ensure_covers_db(conn):
     conn.execute("""
         CREATE TABLE IF NOT EXISTS covers (
@@ -156,6 +241,7 @@ class BackCoverDialog(tk.Toplevel):
 
     def __init__(self, parent, panel, app):
         super().__init__(parent)
+        self.configure(bg=THEME["panel"])
         self.panel = panel
         self.app = app
         self.title(f"Rueckseiten-Inhalt - {panel.name()}")
@@ -164,10 +250,10 @@ class BackCoverDialog(tk.Toplevel):
 
         ratio_row = ttk.Frame(self)
         ratio_row.pack(fill="x", padx=10, pady=(10, 4))
-        ttk.Label(ratio_row, text="Bildanteil oben (%):").pack(side="left")
+        ttk.Label(ratio_row, text="BILDANTEIL OBEN (%):", style="Field.TLabel").pack(side="left")
         self.ratio_var = tk.StringVar(value=str(panel.art_ratio_percent))
         ttk.Entry(ratio_row, textvariable=self.ratio_var, width=6).pack(side="left", padx=5)
-        ttk.Label(ratio_row, text="(Rest = Anforderungen + Kompatibilitaet + Logos)", foreground="#666").pack(side="left")
+        ttk.Label(ratio_row, text="(Rest = Anforderungen + Kompatibilitaet + Logos)", style="Dim.TLabel").pack(side="left")
 
         text_row = ttk.Frame(self)
         text_row.pack(fill="both", expand=True, padx=10, pady=4)
@@ -175,29 +261,39 @@ class BackCoverDialog(tk.Toplevel):
         text_row.columnconfigure(1, weight=1)
         text_row.rowconfigure(0, weight=1)
 
-        min_col = ttk.LabelFrame(text_row, text="Minimum-Spalte")
+        min_col = ttk.LabelFrame(text_row, text="MINIMUM-SPALTE")
         min_col.grid(row=0, column=0, sticky="nsew", padx=(0, 5))
         min_title_row = ttk.Frame(min_col)
         min_title_row.pack(fill="x", padx=4, pady=(4, 0))
-        ttk.Label(min_title_row, text="Titel:").pack(side="left")
+        ttk.Label(min_title_row, text="TITEL:", style="Field.TLabel").pack(side="left")
         self.min_title_var = tk.StringVar(value=panel.min_title)
         ttk.Entry(min_title_row, textvariable=self.min_title_var).pack(side="left", fill="x", expand=True, padx=(4, 0))
-        self.min_text = tk.Text(min_col, width=28, height=8)
+        self.min_text = tk.Text(
+            min_col, width=28, height=8, bg=THEME["input_bg"], fg=THEME["text"],
+            insertbackground=THEME["cyan"], selectbackground=THEME["cyan_dim"],
+            selectforeground=THEME["on_cyan"], relief="flat",
+            highlightthickness=1, highlightbackground=THEME["border"], highlightcolor=THEME["cyan"],
+        )
         self.min_text.pack(fill="both", expand=True, padx=4, pady=4)
         self.min_text.insert("1.0", panel.min_text_content)
 
-        rec_col = ttk.LabelFrame(text_row, text="Empfohlen-Spalte")
+        rec_col = ttk.LabelFrame(text_row, text="EMPFOHLEN-SPALTE")
         rec_col.grid(row=0, column=1, sticky="nsew", padx=(5, 0))
         rec_title_row = ttk.Frame(rec_col)
         rec_title_row.pack(fill="x", padx=4, pady=(4, 0))
-        ttk.Label(rec_title_row, text="Titel:").pack(side="left")
+        ttk.Label(rec_title_row, text="TITEL:", style="Field.TLabel").pack(side="left")
         self.rec_title_var = tk.StringVar(value=panel.rec_title)
         ttk.Entry(rec_title_row, textvariable=self.rec_title_var).pack(side="left", fill="x", expand=True, padx=(4, 0))
-        self.rec_text = tk.Text(rec_col, width=28, height=8)
+        self.rec_text = tk.Text(
+            rec_col, width=28, height=8, bg=THEME["input_bg"], fg=THEME["text"],
+            insertbackground=THEME["cyan"], selectbackground=THEME["cyan_dim"],
+            selectforeground=THEME["on_cyan"], relief="flat",
+            highlightthickness=1, highlightbackground=THEME["border"], highlightcolor=THEME["cyan"],
+        )
         self.rec_text.pack(fill="both", expand=True, padx=4, pady=4)
         self.rec_text.insert("1.0", panel.rec_text_content)
 
-        compat_frame = ttk.LabelFrame(self, text="Steam-Kompatibilitaet & Eingabegeraete")
+        compat_frame = ttk.LabelFrame(self, text="STEAM-KOMPATIBILITAET & EINGABEGERAETE")
         compat_frame.pack(fill="x", padx=10, pady=(4, 4))
 
         self.show_compat_var = tk.BooleanVar(value=panel.show_compat)
@@ -205,13 +301,13 @@ class BackCoverDialog(tk.Toplevel):
             compat_frame, text="Auf dem Cover anzeigen", variable=self.show_compat_var
         ).grid(row=0, column=0, columnspan=4, sticky="w", padx=4, pady=(4, 2))
 
-        ttk.Label(compat_frame, text="Steam Deck:").grid(row=1, column=0, sticky="w", padx=4, pady=2)
+        ttk.Label(compat_frame, text="STEAM DECK:", style="Field.TLabel").grid(row=1, column=0, sticky="w", padx=4, pady=2)
         self.steamdeck_var = tk.StringVar(value=panel.steamdeck_rating)
         ttk.Combobox(
             compat_frame, textvariable=self.steamdeck_var, values=RATING_OPTIONS, state="readonly", width=18
         ).grid(row=1, column=1, sticky="w", padx=4, pady=2)
 
-        ttk.Label(compat_frame, text="Steam Machine:").grid(row=1, column=2, sticky="w", padx=4, pady=2)
+        ttk.Label(compat_frame, text="STEAM MACHINE:", style="Field.TLabel").grid(row=1, column=2, sticky="w", padx=4, pady=2)
         self.steammachine_var = tk.StringVar(value=panel.steammachine_rating)
         ttk.Combobox(
             compat_frame, textvariable=self.steammachine_var, values=RATING_OPTIONS, state="readonly", width=18
@@ -226,25 +322,30 @@ class BackCoverDialog(tk.Toplevel):
             row=2, column=2, columnspan=2, sticky="w", padx=4, pady=(2, 4)
         )
 
-        logos_frame = ttk.LabelFrame(self, text="Firmenlogos (werden unten in einer Reihe angezeigt)")
+        logos_frame = ttk.LabelFrame(self, text="FIRMENLOGOS (werden unten in einer Reihe angezeigt)")
         logos_frame.pack(fill="x", padx=10, pady=(4, 10))
-        self.logos_list = tk.Listbox(logos_frame, height=4)
+        self.logos_list = tk.Listbox(
+            logos_frame, height=4, bg=THEME["input_bg"], fg=THEME["text"],
+            selectbackground=THEME["cyan_dim"], selectforeground=THEME["on_cyan"],
+            relief="flat", highlightthickness=1, highlightbackground=THEME["border"],
+            highlightcolor=THEME["cyan"],
+        )
         self.logos_list.pack(side="left", fill="both", expand=True, padx=(4, 4), pady=4)
         for logo_path in panel.logo_paths:
             self.logos_list.insert("end", Path(logo_path).name)
 
         logos_btns = ttk.Frame(logos_frame)
         logos_btns.pack(side="left", padx=(0, 4), pady=4)
-        ttk.Button(logos_btns, text="Hinzufuegen...", command=self.add_logos).pack(fill="x", pady=2)
-        ttk.Button(logos_btns, text="Entfernen", command=self.remove_selected_logo).pack(fill="x", pady=2)
-        ttk.Button(logos_btns, text="Alle loeschen", command=self.clear_logos).pack(fill="x", pady=2)
+        ttk.Button(logos_btns, text="HINZUFUEGEN...", command=self.add_logos).pack(fill="x", pady=2)
+        ttk.Button(logos_btns, text="ENTFERNEN", style="Secondary.TButton", command=self.remove_selected_logo).pack(fill="x", pady=2)
+        ttk.Button(logos_btns, text="ALLE LOESCHEN", style="Secondary.TButton", command=self.clear_logos).pack(fill="x", pady=2)
 
         self._logos = list(zip(panel.logo_paths, panel.logos))
 
         btn_row = ttk.Frame(self)
         btn_row.pack(fill="x", padx=10, pady=(0, 10))
-        ttk.Button(btn_row, text="Uebernehmen", command=self.apply).pack(side="right")
-        ttk.Button(btn_row, text="Abbrechen", command=self.destroy).pack(side="right", padx=10)
+        ttk.Button(btn_row, text="UEBERNEHMEN", command=self.apply).pack(side="right")
+        ttk.Button(btn_row, text="ABBRECHEN", style="Secondary.TButton", command=self.destroy).pack(side="right", padx=10)
 
     def add_logos(self):
         paths = filedialog.askopenfilenames(
@@ -333,7 +434,7 @@ class Panel:
         self.frame.grid(row=0, column=index, padx=5, pady=5, sticky="nsew")
 
         self.drag_handle = ttk.Label(
-            self.frame, text="☰ Ziehen zum Sortieren", foreground="#888", cursor="fleur", anchor="center"
+            self.frame, text="☰ ZIEHEN ZUM SORTIEREN", style="Dim.TLabel", cursor="fleur", anchor="center"
         )
         self.drag_handle.grid(row=0, column=0, columnspan=2, pady=(2, 4), sticky="ew")
         self.drag_handle.bind("<ButtonPress-1>", self._on_drag_handle_press)
@@ -348,18 +449,18 @@ class Panel:
         self.path_label = ttk.Label(self.frame, text="kein Bild", width=20, anchor="w")
         self.path_label.grid(row=2, column=0, columnspan=2, pady=2)
 
-        ttk.Button(self.frame, text="Bild waehlen", command=self.choose_image).grid(
+        ttk.Button(self.frame, text="BILD WAEHLEN", command=self.choose_image).grid(
             row=3, column=0, columnspan=2, pady=2
         )
 
         width_row = ttk.Frame(self.frame)
         width_row.grid(row=4, column=0, columnspan=2, pady=2)
-        ttk.Label(width_row, text="Breite (cm):").pack(side="left")
+        ttk.Label(width_row, text="BREITE (CM):", style="Field.TLabel").pack(side="left")
         self.width_var = tk.StringVar(value=str(PANEL_DEFAULTS[index]["width_cm"]))
         ttk.Entry(width_row, textvariable=self.width_var, width=6).pack(side="left")
         self.width_var.trace_add("write", lambda *_: self.app.update_preview())
 
-        ttk.Label(self.frame, text="Modus:").grid(row=5, column=0, columnspan=2)
+        ttk.Label(self.frame, text="MODUS:", style="Field.TLabel").grid(row=5, column=0, columnspan=2)
         self.mode_var = tk.StringVar(value=FIT_MODES[0])
         mode_combo = ttk.Combobox(
             self.frame, textvariable=self.mode_var, values=FIT_MODES, state="readonly", width=22
@@ -368,13 +469,15 @@ class Panel:
         mode_combo.bind("<<ComboboxSelected>>", lambda *_: self._on_mode_change())
 
         self.canvas = tk.Canvas(
-            self.frame, width=self.THUMB_MAX, height=self.THUMB_MAX, bg="#ddd", cursor="fleur"
+            self.frame, width=self.THUMB_MAX, height=self.THUMB_MAX, bg=THEME["input_bg"],
+            highlightthickness=1, highlightbackground=THEME["border"], highlightcolor=THEME["cyan"],
+            cursor="fleur",
         )
         self.canvas.grid(row=7, column=0, columnspan=2, pady=4)
         self.canvas.bind("<ButtonPress-1>", self._on_drag_start)
         self.canvas.bind("<B1-Motion>", self._on_drag_move)
 
-        self.hint_label = ttk.Label(self.frame, text="", foreground="#666", wraplength=120, justify="center")
+        self.hint_label = ttk.Label(self.frame, text="", style="Dim.TLabel", wraplength=120, justify="center")
         self.hint_label.grid(row=8, column=0, columnspan=2)
         self._update_hint()
 
@@ -385,7 +488,7 @@ class Panel:
 
         self.back_edit_btn = ttk.Button(
             self.frame,
-            text="Rueckseiten-Inhalt...",
+            text="RUECKSEITEN-INHALT...",
             command=self.open_back_dialog,
             state=("normal" if self.back_mode_var.get() else "disabled"),
         )
@@ -453,11 +556,27 @@ class Panel:
         self.path_label.configure(text=Path(path).name)
         self.app.update_preview()
 
+    @property
     def width_cm(self) -> float:
         try:
             return max(0.1, float(self.width_var.get().replace(",", ".")))
         except ValueError:
             return PANEL_DEFAULTS[self.index]["width_cm"]
+
+    # -- Duenne Adapter-Properties: reichen die Tkinter-Var-Werte als reine
+    # Python-Werte durch, damit cover_render.py (framework-unabhaengig,
+    # kein Tkinter) diese Panel-Instanzen direkt entgegennehmen kann.
+    @property
+    def mode(self) -> str:
+        return self.mode_var.get()
+
+    @property
+    def is_back(self) -> bool:
+        return self.back_mode_var.get()
+
+    @property
+    def wrap_front(self) -> bool:
+        return self.wrap_front_var.get()
 
     def art_ratio_frac(self) -> float:
         return max(0.01, min(0.99, self.art_ratio_percent / 100.0))
@@ -466,7 +585,7 @@ class Panel:
         return self.name_var.get() or f"Panel {self.index + 1}"
 
     def redraw_thumbnail(self):
-        w_cm = self.width_cm()
+        w_cm = self.width_cm
         h_cm = self.app.get_height_cm()
         aspect = (w_cm / h_cm) if h_cm else 1.0
 
@@ -514,17 +633,18 @@ class SaveBannerTemplateDialog(tk.Toplevel):
 
     def __init__(self, parent, banner_path):
         super().__init__(parent)
+        self.configure(bg=THEME["panel"])
         self.banner_path = banner_path
         self.title("Banner als Vorlage speichern")
         self.geometry("360x180")
         self.transient(parent)
         self.grab_set()
 
-        ttk.Label(self, text="Name der Vorlage:").pack(anchor="w", padx=10, pady=(10, 2))
+        ttk.Label(self, text="NAME DER VORLAGE:", style="Field.TLabel").pack(anchor="w", padx=10, pady=(10, 2))
         self.name_var = tk.StringVar(value=Path(banner_path).stem)
         ttk.Entry(self, textvariable=self.name_var).pack(fill="x", padx=10)
 
-        ttk.Label(self, text="Konsole:").pack(anchor="w", padx=10, pady=(10, 2))
+        ttk.Label(self, text="KONSOLE:", style="Field.TLabel").pack(anchor="w", padx=10, pady=(10, 2))
         self.console_var = tk.StringVar(value=CONSOLE_OPTIONS[0])
         ttk.Combobox(
             self, textvariable=self.console_var, values=CONSOLE_OPTIONS, state="readonly"
@@ -532,8 +652,8 @@ class SaveBannerTemplateDialog(tk.Toplevel):
 
         btn_row = ttk.Frame(self)
         btn_row.pack(fill="x", padx=10, pady=15)
-        ttk.Button(btn_row, text="Speichern", command=self.save).pack(side="right")
-        ttk.Button(btn_row, text="Abbrechen", command=self.destroy).pack(side="right", padx=10)
+        ttk.Button(btn_row, text="SPEICHERN", command=self.save).pack(side="right")
+        ttk.Button(btn_row, text="ABBRECHEN", style="Secondary.TButton", command=self.destroy).pack(side="right", padx=10)
 
     def save(self):
         name = self.name_var.get().strip()
@@ -570,6 +690,7 @@ class BannerTemplateDialog(tk.Toplevel):
 
     def __init__(self, parent, app):
         super().__init__(parent)
+        self.configure(bg=THEME["panel"])
         self.app = app
         self.title("Banner-Vorlage laden")
         self.geometry("480x360")
@@ -578,21 +699,26 @@ class BannerTemplateDialog(tk.Toplevel):
 
         filter_row = ttk.Frame(self)
         filter_row.pack(fill="x", padx=10, pady=(10, 4))
-        ttk.Label(filter_row, text="Konsole filtern:").pack(side="left")
+        ttk.Label(filter_row, text="KONSOLE FILTERN:", style="Field.TLabel").pack(side="left")
         self.filter_var = tk.StringVar(value="Alle")
         ttk.Combobox(
             filter_row, textvariable=self.filter_var, values=["Alle"] + CONSOLE_OPTIONS, state="readonly", width=16
         ).pack(side="left", padx=5)
         self.filter_var.trace_add("write", lambda *_: self.refresh_list())
 
-        self.list_box = tk.Listbox(self)
+        self.list_box = tk.Listbox(
+            self, bg=THEME["input_bg"], fg=THEME["text"],
+            selectbackground=THEME["cyan_dim"], selectforeground=THEME["on_cyan"],
+            relief="flat", highlightthickness=1, highlightbackground=THEME["border"],
+            highlightcolor=THEME["cyan"],
+        )
         self.list_box.pack(fill="both", expand=True, padx=10, pady=4)
 
         btn_row = ttk.Frame(self)
         btn_row.pack(fill="x", padx=10, pady=(0, 10))
-        ttk.Button(btn_row, text="Laden", command=self.load_selected).pack(side="left")
-        ttk.Button(btn_row, text="Loeschen", command=self.delete_selected).pack(side="left", padx=10)
-        ttk.Button(btn_row, text="Schliessen", command=self.destroy).pack(side="right")
+        ttk.Button(btn_row, text="LADEN", command=self.load_selected).pack(side="left")
+        ttk.Button(btn_row, text="LOESCHEN", style="Secondary.TButton", command=self.delete_selected).pack(side="left", padx=10)
+        ttk.Button(btn_row, text="SCHLIESSEN", command=self.destroy).pack(side="right")
 
         self._templates = []
         self.refresh_list()
@@ -660,6 +786,8 @@ class CoverMakerApp:
         self.root = root
         root.title("Cover Maker")
         root.resizable(True, True)
+        root.geometry("900x820")
+        root.minsize(700, 480)
 
         self.combined_image = None
         self.last_cover_id = None
@@ -667,15 +795,65 @@ class CoverMakerApp:
         self.banner_path = None
         self.drag_panel = None
 
+        ttk.Label(
+            root, text="◆  STEAM · COVER MAKER SYSTEM  ◆",
+            style="Hud.TLabel", anchor="center",
+        ).pack(side="top", fill="x", pady=(8, 4))
+        ttk.Separator(root, orient="horizontal").pack(side="top", fill="x", padx=10, pady=(0, 4))
+
+        # Aktionsleiste zuerst (und mit side="bottom") einhaengen, damit sie
+        # immer sichtbar am unteren Fensterrand bleibt, auch wenn der Inhalt
+        # darueber (Panels, Vorschau) mehr Platz braucht als das Fenster hoch
+        # ist - der restliche Bereich wird dafuer scrollbar (siehe unten).
+        button_frame = ttk.Frame(root)
+        button_frame.pack(side="bottom", fill="x", padx=10, pady=10)
+        ttk.Button(button_frame, text="SPEICHERN ALS...", command=self.export_image).pack(side="right")
+        self.assign_button = ttk.Button(
+            button_frame, text="SPIEL ZUWEISEN...", command=self.open_assign_tool, state="disabled"
+        )
+        self.assign_button.pack(side="right", padx=(0, 10))
+        ttk.Button(button_frame, text="PROJEKT LADEN...", command=self.open_project_dialog).pack(
+            side="left"
+        )
+
+        scroll_area = ttk.Frame(root)
+        scroll_area.pack(side="top", fill="both", expand=True)
+
+        scroll_canvas = tk.Canvas(scroll_area, bg=THEME["panel"], highlightthickness=0)
+        scrollbar = ttk.Scrollbar(scroll_area, orient="vertical", command=scroll_canvas.yview)
+        scroll_canvas.configure(yscrollcommand=scrollbar.set)
+        scroll_canvas.pack(side="left", fill="both", expand=True)
+        scrollbar.pack(side="right", fill="y")
+
+        content = ttk.Frame(scroll_canvas)
+        content_window = scroll_canvas.create_window((0, 0), window=content, anchor="nw")
+
+        def _sync_scrollregion(_event=None):
+            scroll_canvas.configure(scrollregion=scroll_canvas.bbox("all"))
+
+        def _sync_content_width(event):
+            scroll_canvas.itemconfig(content_window, width=event.width)
+            draw_hud_grid(scroll_canvas, width=event.width, height=event.height)
+
+        content.bind("<Configure>", _sync_scrollregion)
+        scroll_canvas.bind("<Configure>", _sync_content_width)
+
+        def _on_mousewheel(event):
+            scroll_canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
+
+        scroll_canvas.bind_all("<MouseWheel>", _on_mousewheel)
+
+        root = content  # ab hier haengen alle Inhalts-Widgets im scrollbaren Bereich
+
         settings_frame = ttk.Frame(root)
         settings_frame.pack(fill="x", padx=10, pady=(10, 0))
 
-        ttk.Label(settings_frame, text="Hoehe (cm):").pack(side="left")
+        ttk.Label(settings_frame, text="HOEHE (CM):", style="Field.TLabel").pack(side="left")
         self.height_var = tk.StringVar(value="10")
         ttk.Entry(settings_frame, textvariable=self.height_var, width=6).pack(side="left", padx=(2, 15))
         self.height_var.trace_add("write", lambda *_: self.update_preview())
 
-        ttk.Label(settings_frame, text="DPI:").pack(side="left")
+        ttk.Label(settings_frame, text="DPI:", style="Field.TLabel").pack(side="left")
         self.dpi_var = tk.StringVar(value="300")
         ttk.Entry(settings_frame, textvariable=self.dpi_var, width=6).pack(side="left", padx=(2, 15))
         self.dpi_var.trace_add("write", lambda *_: self.update_preview())
@@ -683,17 +861,17 @@ class CoverMakerApp:
         self.info_label = ttk.Label(settings_frame, text="")
         self.info_label.pack(side="left", padx=15)
 
-        banner_frame = ttk.LabelFrame(root, text="Banner (z. B. Steam-Leiste oben)")
+        banner_frame = ttk.LabelFrame(root, text="BANNER (Z. B. STEAM-LEISTE OBEN)")
         banner_frame.pack(fill="x", padx=10, pady=(10, 0))
 
         banner_row = ttk.Frame(banner_frame)
         banner_row.pack(fill="x", padx=5, pady=5)
-        ttk.Button(banner_row, text="Banner-Bild waehlen...", command=self.choose_banner_image).pack(side="left")
+        ttk.Button(banner_row, text="BANNER-BILD WAEHLEN...", command=self.choose_banner_image).pack(side="left")
         self.banner_path_label = ttk.Label(banner_row, text="kein Banner", width=30, anchor="w")
         self.banner_path_label.pack(side="left", padx=10)
-        ttk.Button(banner_row, text="Entfernen", command=self.clear_banner).pack(side="left")
+        ttk.Button(banner_row, text="ENTFERNEN", style="Secondary.TButton", command=self.clear_banner).pack(side="left")
 
-        ttk.Label(banner_row, text="Hoehe (cm):").pack(side="left", padx=(20, 2))
+        ttk.Label(banner_row, text="HOEHE (CM):", style="Field.TLabel").pack(side="left", padx=(20, 2))
         self.banner_height_var = tk.StringVar(value="1.0")
         ttk.Entry(banner_row, textvariable=self.banner_height_var, width=6).pack(side="left")
         self.banner_height_var.trace_add("write", lambda *_: self.update_preview())
@@ -701,10 +879,10 @@ class CoverMakerApp:
         banner_template_row = ttk.Frame(banner_frame)
         banner_template_row.pack(fill="x", padx=5, pady=(0, 5))
         ttk.Button(
-            banner_template_row, text="Als Vorlage speichern...", command=self.save_banner_template
+            banner_template_row, text="ALS VORLAGE SPEICHERN...", command=self.save_banner_template
         ).pack(side="left")
         ttk.Button(
-            banner_template_row, text="Vorlage laden...", command=self.open_banner_template_dialog
+            banner_template_row, text="VORLAGE LADEN...", command=self.open_banner_template_dialog
         ).pack(side="left", padx=10)
 
         ttk.Label(
@@ -713,7 +891,7 @@ class CoverMakerApp:
                 "Das Banner ueberlagert oben alle Panels ausser denen, die als \"Rueckseite\" markiert sind. "
                 "Panels koennen per Ziehen am “☰”-Griff neu sortiert werden."
             ),
-            foreground="#666",
+            style="Dim.TLabel",
         ).pack(fill="x", padx=5, pady=(0, 5))
 
         self.panels_frame = ttk.Frame(root)
@@ -723,21 +901,10 @@ class CoverMakerApp:
         for i in range(4):
             self.panels_frame.columnconfigure(i, weight=1)
 
-        preview_frame = ttk.LabelFrame(root, text="Gesamtvorschau")
+        preview_frame = ttk.LabelFrame(root, text="GESAMTVORSCHAU")
         preview_frame.pack(fill="both", expand=True, padx=10, pady=(0, 10))
         self.preview_label = ttk.Label(preview_frame)
         self.preview_label.pack(padx=5, pady=5)
-
-        button_frame = ttk.Frame(root)
-        button_frame.pack(fill="x", padx=10, pady=(0, 10))
-        ttk.Button(button_frame, text="Speichern als...", command=self.export_image).pack(side="right")
-        self.assign_button = ttk.Button(
-            button_frame, text="Spiel zuweisen...", command=self.open_assign_tool, state="disabled"
-        )
-        self.assign_button.pack(side="right", padx=(0, 10))
-        ttk.Button(button_frame, text="Projekt laden...", command=self.open_project_dialog).pack(
-            side="left"
-        )
 
         self._preview_photo = None
         self.update_preview()
@@ -842,338 +1009,33 @@ class CoverMakerApp:
         self.update_preview()
 
     # -- Rendering -----------------------------------------------------
-    def _render_source(self, src_image, mode, w_px, h_px, center_x=0.5, center_y=0.5):
-        w_px = max(1, w_px)
-        h_px = max(1, h_px)
-        src = src_image.convert("RGB")
-
-        if mode == MODE_STRETCH:
-            return src.resize((w_px, h_px), Image.LANCZOS)
-
-        if mode == MODE_CONTAIN:
-            fitted = ImageOps.contain(src, (w_px, h_px), method=Image.LANCZOS)
-            canvas = Image.new("RGB", (w_px, h_px), "white")
-            canvas.paste(fitted, ((w_px - fitted.width) // 2, (h_px - fitted.height) // 2))
-            return canvas
-
-        # MODE_CROP (Standard)
-        return ImageOps.fit(src, (w_px, h_px), method=Image.LANCZOS, centering=(center_x, center_y))
-
-    def _draw_requirements(self, draw, panel, x, y, w, h):
-        if h <= 10 or w <= 10:
-            return
-        pad = max(4, round(w * 0.02))
-        col_w = max(1, (w - pad * 3) // 2)
-        col1_x = x + pad
-        col2_x = x + pad * 2 + col_w
-
-        # Kleiner gehalten als Fliesstext, damit mehr Platz fuer
-        # Kompatibilitaets-Infos und Logos bleibt.
-        header_size = max(8, round(h * 0.085))
-        body_size = max(6, round(h * 0.06))
-        font_bold = load_font(True, header_size)
-        font_reg = load_font(False, body_size)
-        line_gap = max(2, round(body_size * 0.4))
-
-        draw.text((col1_x, y + pad), panel.min_title, font=font_bold, fill="black")
-        draw.text((col2_x, y + pad), panel.rec_title, font=font_bold, fill="black")
-
-        line_y = y + pad + header_size + line_gap
-        for line in panel.min_text_content.splitlines():
-            draw.text((col1_x, line_y), line, font=font_reg, fill="black")
-            line_y += body_size + line_gap
-
-        line_y = y + pad + header_size + line_gap
-        for line in panel.rec_text_content.splitlines():
-            draw.text((col2_x, line_y), line, font=font_reg, fill="black")
-            line_y += body_size + line_gap
-
-    def _fit_font(self, draw, text, bold, max_size, max_width):
-        size = max_size
-        while size > 6:
-            font = load_font(bold, size)
-            bbox = draw.textbbox((0, 0), text, font=font)
-            if bbox[2] - bbox[0] <= max_width:
-                return font
-            size -= 1
-        return load_font(bold, 6)
-
-    def _draw_rating_badge(self, draw, cx, cy, w, h, label, rating):
-        if w <= 4 or h <= 4:
-            return
-        color = RATING_COLORS.get(rating, RATING_COLORS["Nicht bewertet"])
-        radius = max(3, round(h * 0.18))
-        draw.rounded_rectangle([cx, cy, cx + w, cy + h], radius=radius, fill=color)
-
-        pad = max(2, round(h * 0.08))
-        avail_text_w = max(4, w - pad * 2)
-        label_size = max(7, round(h * 0.32))
-        value_size = max(6, round(h * 0.26))
-        font_label = self._fit_font(draw, label, True, label_size, avail_text_w)
-        font_value = self._fit_font(draw, rating, False, value_size, avail_text_w)
-
-        label_h = font_label.getbbox(label)[3] - font_label.getbbox(label)[1] if hasattr(font_label, "getbbox") else label_size
-        draw.text((cx + pad, cy + pad), label, font=font_label, fill="white")
-        draw.text((cx + pad, cy + pad + label_h + max(1, round(h * 0.04))), rating, font=font_value, fill="white")
-
-    def _draw_kbm_icon(self, draw, x, y, size, color="#333333"):
-        kb_w = size * 0.62
-        kb_h = size * 0.55
-        kb_y = y + (size - kb_h) / 2
-        draw.rounded_rectangle([x, kb_y, x + kb_w, kb_y + kb_h], radius=max(1, size * 0.04), outline=color, width=2)
-        rows, cols = 2, 4
-        key_pad_x = kb_w * 0.1
-        key_pad_y = kb_h * 0.18
-        cell_w = (kb_w - key_pad_x * 2) / cols
-        cell_h = (kb_h - key_pad_y * 2) / rows
-        for r in range(rows):
-            for c in range(cols):
-                kx = x + key_pad_x + c * cell_w + cell_w * 0.15
-                ky = kb_y + key_pad_y + r * cell_h + cell_h * 0.15
-                draw.rectangle([kx, ky, kx + cell_w * 0.7, ky + cell_h * 0.7], outline=color, width=1)
-
-        mouse_w = size * 0.26
-        mouse_h = size * 0.8
-        mouse_x = x + kb_w + size * 0.12
-        mouse_y = y + (size - mouse_h) / 2
-        draw.rounded_rectangle(
-            [mouse_x, mouse_y, mouse_x + mouse_w, mouse_y + mouse_h], radius=mouse_w * 0.45, outline=color, width=2
-        )
-        draw.line([mouse_x + mouse_w / 2, mouse_y, mouse_x + mouse_w / 2, mouse_y + mouse_h * 0.35], fill=color, width=2)
-
-    def _draw_controller_icon(self, draw, x, y, size, color="#333333"):
-        body_h = size * 0.5
-        body_y = y + (size - body_h) / 2
-        draw.rounded_rectangle([x, body_y, x + size, body_y + body_h], radius=body_h * 0.45, outline=color, width=2)
-
-        stick_r = size * 0.08
-        draw.ellipse(
-            [x + size * 0.16, body_y + body_h * 0.25, x + size * 0.16 + stick_r * 2, body_y + body_h * 0.25 + stick_r * 2],
-            outline=color, width=2,
-        )
-        draw.ellipse(
-            [x + size * 0.34, body_y + body_h * 0.45, x + size * 0.34 + stick_r * 2, body_y + body_h * 0.45 + stick_r * 2],
-            outline=color, width=2,
-        )
-        btn_r = size * 0.06
-        for dx, dy in [(0.68, 0.2), (0.8, 0.32), (0.68, 0.44), (0.56, 0.32)]:
-            bx = x + size * dx
-            by = body_y + body_h * dy
-            draw.ellipse([bx, by, bx + btn_r * 2, by + btn_r * 2], outline=color, width=1)
-
-    def _draw_compat(self, canvas, draw, panel, x, y, w, h):
-        if h <= 4 or w <= 4:
-            return
-        items = []
-        if panel.show_compat:
-            items.append(("badge", "Steam Deck", panel.steamdeck_rating))
-            items.append(("badge", "Steam Machine", panel.steammachine_rating))
-        if panel.input_kbm:
-            items.append(("kbm", None, None))
-        if panel.input_controller:
-            items.append(("controller", None, None))
-        if not items:
-            return
-
-        pad = max(3, round(w * 0.015))
-        n = len(items)
-        avail_w = max(1, w - pad * (n + 1))
-        slot_w = max(1, avail_w // n)
-        slot_h = max(1, h - pad * 2)
-
-        cursor_x = x + pad
-        for kind, label, value in items:
-            if kind == "badge":
-                self._draw_rating_badge(draw, cursor_x, y + pad, slot_w, slot_h, label, value)
-            elif kind == "kbm":
-                icon_size = min(slot_w, slot_h)
-                self._draw_kbm_icon(draw, cursor_x + (slot_w - icon_size) / 2, y + pad + (slot_h - icon_size) / 2, icon_size)
-            elif kind == "controller":
-                icon_size = min(slot_w, slot_h)
-                self._draw_controller_icon(
-                    draw, cursor_x + (slot_w - icon_size) / 2, y + pad + (slot_h - icon_size) / 2, icon_size
-                )
-            cursor_x += slot_w + pad
-
-    def _draw_logos(self, canvas, panel, x, y, w, h):
-        if not panel.logos or h <= 4 or w <= 4:
-            return
-        pad = max(3, round(w * 0.015))
-        n = len(panel.logos)
-        avail_w = max(1, w - pad * (n + 1))
-        slot_w = max(1, avail_w // n)
-        max_logo_h = max(1, h - pad * 2)
-
-        cursor_x = x + pad
-        for logo in panel.logos:
-            logo_copy = logo.convert("RGBA")
-            logo_copy.thumbnail((slot_w, max_logo_h), Image.LANCZOS)
-            paste_x = cursor_x + (slot_w - logo_copy.width) // 2
-            paste_y = y + pad + (max_logo_h - logo_copy.height) // 2
-            canvas.paste(logo_copy, (paste_x, paste_y), logo_copy)
-            cursor_x += slot_w + pad
-
-    def render_back_panel(self, panel: Panel, w_px: int, h_px: int) -> Image.Image:
-        ratio = panel.art_ratio_frac()
-        art_h = max(0, min(h_px, round(h_px * ratio)))
-        lower_h = h_px - art_h
-
-        canvas = Image.new("RGB", (w_px, h_px), "white")
-
-        if panel.pil_image is not None and art_h > 0:
-            art_img = self._render_source(
-                panel.pil_image, panel.mode_var.get(), w_px, art_h, panel.center_x, panel.center_y
-            )
-            canvas.paste(art_img, (0, 0))
-
-        has_compat = panel.show_compat or panel.input_kbm or panel.input_controller
-        logos_h = min(lower_h, max(round(lower_h * 0.22), 0)) if panel.logos else 0
-        compat_h = min(lower_h - logos_h, max(round(lower_h * 0.22), 0)) if has_compat else 0
-        req_h = lower_h - logos_h - compat_h
-
-        draw = ImageDraw.Draw(canvas)
-        self._draw_requirements(draw, panel, 0, art_h, w_px, req_h)
-        self._draw_compat(canvas, draw, panel, 0, art_h + req_h, w_px, compat_h)
-        self._draw_logos(canvas, panel, 0, art_h + req_h + compat_h, w_px, logos_h)
-
-        return canvas
+    # Die eigentliche Bildkomposition (Zuschnitt, Banner, Rueckseite mit
+    # Systemanforderungen/Kompatibilitaet/Logos) lebt in cover_render.py
+    # (framework-unabhaengig) - hier nur noch duenne Wrapper, die die
+    # App-Einstellungen (Hoehe/DPI/Banner) durchreichen. Die Web-Variante
+    # (tools/cover_maker/server/) nutzt dieselben cover_render-Funktionen
+    # und erzeugt so garantiert dasselbe Ergebnisbild wie die Desktop-App.
+    def render_back_panel(self, panel: "Panel", w_px: int, h_px: int) -> Image.Image:
+        return cover_render.render_back_panel(panel, w_px, h_px)
 
     def _front_panel(self):
         return next((p for p in self.panels if p.is_front), None)
 
     def _banner_reserved_px(self, h_px: int) -> int:
-        """Wie viele Pixel oben fuer das Banner freigehalten werden muessen,
-        damit es das Artwork nicht ueberdeckt/abschneidet."""
-        if self.banner_image is None:
-            return 0
-        banner_cm = self._banner_height_cm()
-        height_cm = self._height_cm()
-        if banner_cm <= 0 or height_cm <= 0:
-            return 0
-        ratio = min(0.9, banner_cm / height_cm)
-        return round(h_px * ratio)
+        return cover_render.banner_reserved_px(
+            self.banner_image, self._banner_height_cm(), self._height_cm(), h_px
+        )
 
-    def render_panel(self, panel: Panel, w_px: int, h_px: int) -> Image.Image:
-        if panel.back_mode_var.get():
-            return self.render_back_panel(panel, w_px, h_px)
-
-        # Das Banner ueberlagert spaeter den oberen Rand dieses Panels ->
-        # Artwork um die Bannerhoehe nach unten schieben, damit oben nichts
-        # vom eigentlichen Bild verdeckt/abgeschnitten wird. Der sichtbare
-        # Bildausschnitt kann weiterhin per Ziehen (center_x/center_y) im
-        # verbleibenden Bereich verschoben werden.
-        banner_h = self._banner_reserved_px(h_px)
-        content_h = max(1, h_px - banner_h)
-
-        front_panel = self._front_panel()
-        if (
-            panel.wrap_front_var.get()
-            and front_panel is not None
-            and front_panel is not panel
-            and front_panel.pil_image is not None
-            and not front_panel.back_mode_var.get()
-        ):
-            # Naeherung fuer Einzel-Thumbnails: eigener Ausschnitt des
-            # Frontbilds. Im Gesamtcover wird stattdessen ein gemeinsamer,
-            # nahtlos zusammenhaengender Ausschnitt verwendet (siehe unten).
-            content = self._render_source(
-                front_panel.pil_image, front_panel.mode_var.get(), w_px, content_h,
-                front_panel.center_x, front_panel.center_y,
-            )
-        elif panel.pil_image is None:
-            content = Image.new("RGB", (w_px, content_h), "white")
-        else:
-            content = self._render_source(
-                panel.pil_image, panel.mode_var.get(), w_px, content_h, panel.center_x, panel.center_y
-            )
-
-        if banner_h <= 0:
-            return content
-
-        canvas = Image.new("RGB", (w_px, h_px), "white")
-        if self.banner_image is not None:
-            banner_preview = self._render_source(self.banner_image, MODE_STRETCH, w_px, banner_h)
-            canvas.paste(banner_preview, (0, 0))
-        canvas.paste(content, (0, banner_h))
-        return canvas
+    def render_panel(self, panel: "Panel", w_px: int, h_px: int) -> Image.Image:
+        return cover_render.render_panel(
+            panel, w_px, h_px, panels=self.panels,
+            banner_image=self.banner_image, banner_height_cm=self._banner_height_cm(), height_cm=self._height_cm(),
+        )
 
     def build_combined_image(self):
-        dpi = self._dpi()
-        height_px = cm_to_px(self._height_cm(), dpi)
-        widths_px = [cm_to_px(p.width_cm(), dpi) for p in self.panels]
-        total_width_px = sum(widths_px)
-
-        canvas = Image.new("RGB", (total_width_px, height_px), "white")
-
-        # Panels, die "Frontbild fortsetzen" aktiviert haben und direkt neben
-        # dem Front-Panel liegen, bekommen keinen eigenen Ausschnitt, sondern
-        # ein Stueck eines gemeinsam berechneten, nahtlosen Ausschnitts - so
-        # wirkt es wie ein umlaufendes (Wrap-)Cover statt zweier Einzelbilder.
-        wrap_slices = {}
-        wrap_image = None
-        front_panel = self._front_panel()
-        if front_panel is not None and front_panel.pil_image is not None and not front_panel.back_mode_var.get():
-            front_idx = self.panels.index(front_panel)
-            left_idx = front_idx - 1
-            right_idx = front_idx + 1
-            left_panel = self.panels[left_idx] if left_idx >= 0 else None
-            right_panel = self.panels[right_idx] if right_idx < len(self.panels) else None
-            left_wraps = bool(left_panel and left_panel.wrap_front_var.get() and not left_panel.back_mode_var.get())
-            right_wraps = bool(right_panel and right_panel.wrap_front_var.get() and not right_panel.back_mode_var.get())
-            if left_wraps or right_wraps:
-                left_w = widths_px[left_idx] if left_wraps else 0
-                right_w = widths_px[right_idx] if right_wraps else 0
-                total_w = left_w + widths_px[front_idx] + right_w
-
-                # Gleiche Banner-Reservierung wie in render_panel, aber auf
-                # den gesamten Wrap-Ausschnitt angewendet, damit die Naht
-                # zwischen den Panels weiterhin nahtlos bleibt.
-                banner_h = self._banner_reserved_px(height_px)
-                wrap_content_h = max(1, height_px - banner_h)
-                wrap_content = self._render_source(
-                    front_panel.pil_image, front_panel.mode_var.get(), total_w, wrap_content_h,
-                    front_panel.center_x, front_panel.center_y,
-                )
-                if banner_h > 0:
-                    wrap_image = Image.new("RGB", (total_w, height_px), "white")
-                    if self.banner_image is not None:
-                        banner_preview = self._render_source(self.banner_image, MODE_STRETCH, total_w, banner_h)
-                        wrap_image.paste(banner_preview, (0, 0))
-                    wrap_image.paste(wrap_content, (0, banner_h))
-                else:
-                    wrap_image = wrap_content
-
-                if left_wraps:
-                    wrap_slices[left_idx] = (0, left_w)
-                wrap_slices[front_idx] = (left_w, widths_px[front_idx])
-                if right_wraps:
-                    wrap_slices[right_idx] = (left_w + widths_px[front_idx], right_w)
-
-        x_offset = 0
-        banner_segments = []
-        for i, (panel, w_px) in enumerate(zip(self.panels, widths_px)):
-            if wrap_image is not None and i in wrap_slices:
-                sx, sw = wrap_slices[i]
-                piece = wrap_image.crop((sx, 0, sx + sw, height_px))
-            else:
-                piece = self.render_panel(panel, w_px, height_px)
-            canvas.paste(piece, (x_offset, 0))
-            if not panel.back_mode_var.get():
-                banner_segments.append((x_offset, w_px))
-            x_offset += w_px
-
-        if self.banner_image is not None:
-            banner_h_px = cm_to_px(self._banner_height_cm(), dpi) if self._banner_height_cm() > 0 else 0
-            total_banner_w = sum(w for _, w in banner_segments)
-            if banner_h_px > 0 and total_banner_w > 0:
-                banner_resized = self._render_source(self.banner_image, MODE_STRETCH, total_banner_w, banner_h_px)
-                cursor = 0
-                for seg_x, seg_w in banner_segments:
-                    slice_img = banner_resized.crop((cursor, 0, cursor + seg_w, banner_h_px))
-                    canvas.paste(slice_img, (seg_x, 0))
-                    cursor += seg_w
-
-        return canvas
+        return cover_render.build_combined_image(
+            self.panels, self._height_cm(), self._dpi(), self.banner_image, self._banner_height_cm()
+        )
 
     def update_preview(self, skip_thumbnails=False):
         try:
@@ -1258,7 +1120,7 @@ class CoverMakerApp:
                 width=line_px,
             )
 
-            widths_px = [cm_to_px(p.width_cm(), dpi) for p in self.panels]
+            widths_px = [cm_to_px(p.width_cm, dpi) for p in self.panels]
             dash_len = max(4, round(dpi / 300 * 10))
             gap_len = max(3, round(dpi / 300 * 6))
             fold_cursor = 0
@@ -1301,7 +1163,7 @@ class CoverMakerApp:
                 """,
                 (
                     resolved_path,
-                    sum(p.width_cm() for p in self.panels),
+                    sum(p.width_cm for p in self.panels),
                     self._height_cm(),
                     dpi,
                     time.strftime("%Y-%m-%dT%H:%M:%S"),
@@ -1476,6 +1338,7 @@ class CoverMakerApp:
 
 def main():
     root = tk.Tk()
+    apply_theme(root)
     CoverMakerApp(root)
     root.mainloop()
 

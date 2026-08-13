@@ -3,5 +3,5 @@ Description=Steam-Spielebibliothek in Datenbank einlesen
 
 [Service]
 Type=oneshot
-ExecStart=/usr/bin/python3 %h/steamOs/game_scanner.py
-WorkingDirectory=%h/steamOs
+ExecStart=/usr/bin/python3 @STEAMOS_DIR@/game_scanner.py
+WorkingDirectory=@STEAMOS_DIR@

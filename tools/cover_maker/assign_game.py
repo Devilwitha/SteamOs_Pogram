@@ -8,6 +8,7 @@ Wird auch automatisch von cover_maker.py ueber den Button
 
 import argparse
 import sqlite3
+import sys
 import tkinter as tk
 from pathlib import Path
 from tkinter import ttk, messagebox
@@ -15,6 +16,8 @@ from tkinter import ttk, messagebox
 from PIL import Image, ImageTk
 
 SCRIPT_DIR = Path(__file__).resolve().parent
+sys.path.insert(0, str(SCRIPT_DIR))
+from cover_maker import THEME, apply_theme  # gleiches Dark-/HUD-Design wie Cover Maker
 COVERS_DB = SCRIPT_DIR / "covers.db"
 GAMES_DB = SCRIPT_DIR.parent.parent / "steamOs" / "games.db"
 
@@ -42,12 +45,26 @@ class AssignGameApp:
     def __init__(self, root, preselect_cover_id=None):
         self.root = root
         root.title("Cover einem Spiel zuweisen")
-        root.geometry("820x480")
+        root.geometry("820x520")
+        apply_theme(root)
 
         self._preview_photo = None
         self.covers = []
         self.games = []
         self._visible_games = []
+
+        ttk.Label(
+            root, text="◆  STEAM · COVER MAKER SYSTEM  ◆",
+            style="Hud.TLabel", anchor="center",
+        ).pack(side="top", fill="x", pady=(8, 4))
+        ttk.Separator(root, orient="horizontal").pack(side="top", fill="x", padx=10, pady=(0, 4))
+
+        listbox_kwargs = dict(
+            bg=THEME["input_bg"], fg=THEME["text"],
+            selectbackground=THEME["cyan_dim"], selectforeground=THEME["on_cyan"],
+            relief="flat", highlightthickness=1, highlightbackground=THEME["border"],
+            highlightcolor=THEME["cyan"],
+        )
 
         main = ttk.Frame(root)
         main.pack(fill="both", expand=True, padx=10, pady=10)
@@ -57,7 +74,7 @@ class AssignGameApp:
 
         cover_header = ttk.Frame(main)
         cover_header.grid(row=0, column=0, sticky="ew")
-        ttk.Label(cover_header, text="Gespeicherte Cover").pack(side="left")
+        ttk.Label(cover_header, text="GESPEICHERTE COVER", style="Field.TLabel").pack(side="left")
         self.only_unassigned_var = tk.BooleanVar(value=False)
         ttk.Checkbutton(
             cover_header,
@@ -66,7 +83,7 @@ class AssignGameApp:
             command=lambda: self.load_covers(),
         ).pack(side="right")
 
-        self.cover_list = tk.Listbox(main, exportselection=False, selectmode="extended")
+        self.cover_list = tk.Listbox(main, exportselection=False, selectmode="extended", **listbox_kwargs)
         self.cover_list.grid(row=1, column=0, sticky="nsew", padx=(0, 10))
         self.cover_list.bind("<<ListboxSelect>>", lambda *_: self.on_cover_select())
 
@@ -74,7 +91,7 @@ class AssignGameApp:
         preview_frame.grid(row=0, column=1, rowspan=2, padx=10)
         self.preview_label = ttk.Label(preview_frame)
         self.preview_label.pack()
-        self.assigned_label = ttk.Label(preview_frame, text="", wraplength=200, justify="center")
+        self.assigned_label = ttk.Label(preview_frame, text="", wraplength=200, justify="center", style="Dim.TLabel")
         self.assigned_label.pack(pady=(10, 0))
 
         right = ttk.Frame(main)
@@ -82,23 +99,23 @@ class AssignGameApp:
         right.rowconfigure(1, weight=1)
         right.columnconfigure(0, weight=1)
 
-        ttk.Label(right, text="Spiel suchen").grid(row=0, column=0, sticky="w")
+        ttk.Label(right, text="SPIEL SUCHEN", style="Field.TLabel").grid(row=0, column=0, sticky="w")
         self.search_var = tk.StringVar()
         ttk.Entry(right, textvariable=self.search_var).grid(row=0, column=0, sticky="e")
         self.search_var.trace_add("write", lambda *_: self.refresh_game_list())
 
-        self.game_list = tk.Listbox(right, exportselection=False)
+        self.game_list = tk.Listbox(right, exportselection=False, **listbox_kwargs)
         self.game_list.grid(row=1, column=0, sticky="nsew", pady=(4, 0))
 
         button_row = ttk.Frame(root)
         button_row.pack(fill="x", padx=10, pady=(0, 10))
-        ttk.Button(button_row, text="Zuweisen", command=self.assign_selected).pack(side="left")
-        ttk.Button(button_row, text="Zuweisung entfernen", command=self.remove_assignment).pack(
-            side="left", padx=10
-        )
-        ttk.Button(button_row, text="Ausgewaehlte loeschen...", command=self.delete_selected).pack(
-            side="left", padx=10
-        )
+        ttk.Button(button_row, text="ZUWEISEN", command=self.assign_selected).pack(side="left")
+        ttk.Button(
+            button_row, text="ZUWEISUNG ENTFERNEN", style="Secondary.TButton", command=self.remove_assignment
+        ).pack(side="left", padx=10)
+        ttk.Button(
+            button_row, text="AUSGEWAEHLTE LOESCHEN...", style="Secondary.TButton", command=self.delete_selected
+        ).pack(side="left", padx=10)
 
         self.load_games()
         self.load_covers(preselect_cover_id)

@@ -50,15 +50,20 @@ chmod +x install.sh uninstall.sh
 ./install.sh
 ```
 
-Das Skript kopiert `steamos-pico-monitor.service` nach
-`~/.config/systemd/user/`, aktiviert und startet den Dienst und richtet
-Linger fuer den aktuellen Benutzer ein.
+Das Skript kopiert `steamos-pico-monitor.service`, `steamos-gui.service`
+sowie `steamos-game-scanner.service`/`.timer` nach
+`~/.config/systemd/user/`, aktiviert und startet alle drei und richtet
+Linger fuer den aktuellen Benutzer ein. Die GUI (siehe unten) laeuft danach
+dauerhaft im Hintergrund unter `http://127.0.0.1:8080/`, ohne dass sie
+manuell gestartet werden muss.
 
 Status pruefen:
 
 ```bash
 systemctl --user status steamos-pico-monitor.service
+systemctl --user status steamos-gui.service
 journalctl --user -u steamos-pico-monitor.service -f
+journalctl --user -u steamos-gui.service -f
 ```
 
 Deinstallieren:
@@ -117,7 +122,10 @@ python game_scanner_windows.py
 ## Spielauswahl-GUI (`gui/`)
 
 [`gui/gui_server.py`](gui/gui_server.py) ist eine eigene, in `gui/`
-gekapselte Weboberflaeche zur Auswahl eines Spiels aus `games.db`:
+gekapselte Weboberflaeche zur Auswahl eines Spiels aus `games.db`. Nach
+`./install.sh` (siehe oben) laeuft sie bereits automatisch als
+`steamos-gui.service`; manueller Start ist nur fuers lokale Testen ausserhalb
+des Dienstes noetig:
 
 ```bash
 python3 steamOs/gui/gui_server.py
@@ -291,6 +299,29 @@ automatische Suche per UDP-Broadcast, sonst fest eintragen. Ist kein
 Led_Pico im Netzwerk konfiguriert/erreichbar, wird das beim Farb-Update
 stillschweigend uebersprungen - er ist rein optional, der RFID-Pico/
 Spielstart funktioniert unabhaengig davon.
+
+## LilyGo-Statusdisplay (`lilygo_config.json`)
+
+```json
+{
+  "lilygo_ip": "",
+  "tcp_port": 5009,
+  "udp_port": 5010,
+  "interval_seconds": 2
+}
+```
+
+Ein drittes, ebenfalls optionales Geraet: ein
+[LilyGo T-Display-S3](../lilygo), das CPU-/GPU-Auslastung sowie eine
+Temperatur anzeigt. `stats_monitor.py` liest die Werte ohne
+Zusatzpakete direkt aus sysfs/procfs (siehe `system_stats.py`) und
+schickt sie alle `interval_seconds` an das Display (siehe
+`lilygo_link.py`) - analog zum Led_Pico laeuft das als eigener,
+unabhaengiger Hintergrund-Dienst (`steamos-lilygo-monitor.service`, wird
+von `install.sh` mit eingerichtet). `lilygo_ip` leer lassen fuer
+automatische Suche per UDP-Broadcast, sonst fest eintragen. Ist kein
+Display im Netzwerk konfiguriert/erreichbar, laeuft der Dienst einfach
+weiter, ohne dass das sonst irgendwelche Auswirkungen hat.
 
 ## Konfiguration (`config.json`)
 

@@ -1,11 +1,11 @@
 [Unit]
-Description=SteamOS <-> Pico Verbindungsueberwachung
+Description=SteamOS <-> LilyGo Statusdisplay (CPU/GPU/Temperatur)
 After=network-online.target
 Wants=network-online.target
 
 [Service]
 Type=simple
-ExecStart=/usr/bin/python3 @STEAMOS_DIR@/pico_client.py
+ExecStart=/usr/bin/python3 @STEAMOS_DIR@/stats_monitor.py
 WorkingDirectory=@STEAMOS_DIR@
 Restart=always
 RestartSec=5

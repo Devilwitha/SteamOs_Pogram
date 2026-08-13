@@ -1,0 +1,6 @@
+{
+  "lilygo_ip": "",
+  "tcp_port": 5009,
+  "udp_port": 5010,
+  "interval_seconds": 2
+}

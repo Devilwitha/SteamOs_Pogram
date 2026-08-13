@@ -31,6 +31,7 @@ komplett eigenstaendiges Geraet (led_config.json/led_link.py).
 import csv
 import os
 import shlex
+import shutil
 import signal
 import sqlite3
 import subprocess
@@ -59,21 +60,28 @@ _running_game = None
 
 
 def _resolve_steam_executable():
-    """Unter Windows steckt 'steam' anders als auf SteamOS/Linux i.d.R.
-    nicht im PATH - subprocess.Popen(['steam', ...]) faende die Datei
-    sonst nicht. Ermittelt den vollen Pfad zu steam.exe ueber die
-    Windows-Registry (HKCU\\Software\\Valve\\Steam -> SteamExe). Nur fuer
-    lokale Tests auf Windows relevant, auf SteamOS greift dieser Zweig
-    nicht (sys.platform != 'win32')."""
-    if sys.platform != "win32":
-        return None
-    try:
-        import winreg
-        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, r"Software\Valve\Steam") as key:
-            path, _ = winreg.QueryValueEx(key, "SteamExe")
-            return path if Path(path).is_file() else None
-    except OSError:
-        return None
+    """'steam' steckt nicht immer im PATH des Prozesses, der pico_client.py
+    startet (z.B. systemd-Service mit minimalem PATH, oder eine Shell ohne
+    vollstaendiges Profil) - subprocess.Popen(['steam', ...]) faende die
+    Datei dann nicht. Ermittelt daher den vollen Pfad: unter Windows ueber
+    die Registry (HKCU\\Software\\Valve\\Steam -> SteamExe), sonst per
+    shutil.which() bzw. den ueblichen SteamOS/Linux-Installationspfaden."""
+    if sys.platform == "win32":
+        try:
+            import winreg
+            with winreg.OpenKey(winreg.HKEY_CURRENT_USER, r"Software\Valve\Steam") as key:
+                path, _ = winreg.QueryValueEx(key, "SteamExe")
+                return path if Path(path).is_file() else None
+        except OSError:
+            return None
+
+    which = shutil.which("steam")
+    if which:
+        return which
+    for candidate in (Path.home() / ".local/share/Steam/steam.sh", Path("/usr/bin/steam")):
+        if candidate.is_file():
+            return str(candidate)
+    return None
 
 
 _STEAM_EXECUTABLE = _resolve_steam_executable()
