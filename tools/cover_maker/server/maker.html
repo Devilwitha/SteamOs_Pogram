@@ -156,6 +156,11 @@ button:hover, .btn:hover{transform:translateY(-1px);box-shadow:0 0 18px rgba(0,2
 .logo-remove{padding:2px 8px;font-size:.7rem;clip-path:none;border-radius:3px}
 .preview-frame{background:var(--input-bg);border:1px solid var(--border);border-radius:4px;padding:10px;overflow:auto;text-align:center}
 .preview-frame img{max-width:100%;height:auto}
+.admin-link{
+  position:fixed;left:6px;bottom:4px;font-size:9px;letter-spacing:.04em;
+  color:var(--border);opacity:.5;text-decoration:none;z-index:50;
+}
+.admin-link:hover{opacity:1;color:var(--dim)}
 </style>
 </head>
 <body>
@@ -204,7 +209,9 @@ __PANELS_SECTION__
 <div class="panel section">
   <h2>Cover speichern</h2>
   <form method="POST" action="/maker/save" class="field-row" style="margin:0">
-    <div class="field"><label>Mit Spiel verknuepfen (optional)</label><select name="game_uid">__GAME_OPTIONS__</select></div>
+    <div class="field"><label>Theme-Name</label><input type="text" name="theme_name" placeholder="z. B. Cyberpunk Neon" required></div>
+    <div class="field"><label>Ersteller</label><input type="text" name="author_name" placeholder="Dein Name" required></div>
+    <div class="field"><label>Mit Spiel verknuepfen (optional)</label><input type="text" name="game_name" placeholder="Spielname"></div>
     <div class="field" style="justify-content:flex-end"><button type="submit">COVER IM STORE SPEICHERN</button></div>
   </form>
   <form method="POST" action="/maker/reset" style="margin-top:12px">
@@ -212,18 +219,39 @@ __PANELS_SECTION__
   </form>
 </div>
 </div>
+<a class="admin-link" href="/admin">admin</a>
 
+<script id="maker-layout" type="application/json">__LAYOUT_JSON__</script>
 <script>
 (function () {
+  var LAYOUT = { panels: [], frontIndex: 0 };
+  try {
+    var layoutEl = document.getElementById("maker-layout");
+    if (layoutEl) LAYOUT = JSON.parse(layoutEl.textContent);
+  } catch (e) { /* ignore - Drag-in-Vorschau bleibt dann einfach inaktiv */ }
+
   function refreshPreview() {
     var img = document.getElementById("combined-preview");
     if (img) img.src = "/maker/preview?t=" + Date.now();
   }
 
+  function sendCrop(index, cx, cy) {
+    return fetch("/maker/panel/" + index + "/crop", {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: "center_x=" + cx.toFixed(4) + "&center_y=" + cy.toFixed(4),
+    }).then(function () {
+      var p = LAYOUT.panels[index];
+      if (p) { p.centerX = cx; p.centerY = cy; }
+      refreshPreview();
+    });
+  }
+
+  // -- Zuschnitt direkt im Panel-Vorschaubild (wie gehabt) --------------
   document.querySelectorAll(".crop-box").forEach(function (box) {
     var img = box.querySelector("img");
     if (!img) return;
-    var index = box.dataset.index;
+    var index = parseInt(box.dataset.index, 10);
     var cx = parseFloat(box.dataset.cx);
     var cy = parseFloat(box.dataset.cy);
     var dragging = false, lastX = 0, lastY = 0;
@@ -236,11 +264,7 @@ __PANELS_SECTION__
     function endDrag() {
       if (!dragging) return;
       dragging = false;
-      fetch("/maker/panel/" + index + "/crop", {
-        method: "POST",
-        headers: { "Content-Type": "application/x-www-form-urlencoded" },
-        body: "center_x=" + cx.toFixed(4) + "&center_y=" + cy.toFixed(4),
-      }).then(refreshPreview);
+      sendCrop(index, cx, cy);
     }
 
     box.addEventListener("pointerdown", function (e) {
@@ -261,6 +285,74 @@ __PANELS_SECTION__
     box.addEventListener("pointerup", endDrag);
     box.addEventListener("pointercancel", endDrag);
   });
+
+  // -- Zuschnitt direkt in der Gesamtvorschau ---------------------------
+  // Front- und daran "wrap"-gekoppelte Nachbarpanels zeigen ohnehin
+  // denselben Ausschnitt des Front-Bilds - ein Zug auf so einem Bereich
+  // der Gesamtvorschau passt darum automatisch den Ausschnitt des
+  // Front-Panels an (sonst haette Ziehen dort sichtbar keine Wirkung).
+  // Rueckseiten-Bereiche sind hier nicht ziehbar (eigene Geometrie mit
+  // Systemanforderungen/Logos) - dafuer bitte das Panel-Vorschaubild oben
+  // verwenden.
+  (function () {
+    var previewImg = document.getElementById("combined-preview");
+    if (!previewImg || !LAYOUT.panels.length) return;
+
+    var totalWidth = LAYOUT.panels.reduce(function (s, p) { return s + p.widthCm; }, 0) || 1;
+
+    function resolveSegment(fracX) {
+      var cum = 0;
+      for (var i = 0; i < LAYOUT.panels.length; i++) {
+        var p = LAYOUT.panels[i];
+        var segFrac = p.widthCm / totalWidth;
+        if (fracX < cum + segFrac || i === LAYOUT.panels.length - 1) {
+          return { panel: p, segFrac: segFrac };
+        }
+        cum += segFrac;
+      }
+      return null;
+    }
+
+    var dragging = false, targetIndex = null, segFrac = 1, cx = 0.5, cy = 0.5, lastX = 0, lastY = 0;
+
+    previewImg.style.cursor = "grab";
+    previewImg.style.touchAction = "none";
+    previewImg.draggable = false;
+
+    previewImg.addEventListener("pointerdown", function (e) {
+      var rect = previewImg.getBoundingClientRect();
+      var fracX = Math.min(0.999, Math.max(0, (e.clientX - rect.left) / rect.width));
+      var seg = resolveSegment(fracX);
+      if (!seg || seg.panel.isBack) return;
+
+      targetIndex = (seg.panel.isFront || seg.panel.wrapFront) ? LAYOUT.frontIndex : seg.panel.index;
+      var targetPanel = LAYOUT.panels[targetIndex];
+      cx = targetPanel.centerX; cy = targetPanel.centerY;
+      segFrac = seg.segFrac || 1;
+      dragging = true;
+      lastX = e.clientX; lastY = e.clientY;
+      previewImg.setPointerCapture(e.pointerId);
+      previewImg.style.cursor = "grabbing";
+      e.preventDefault();
+    });
+    previewImg.addEventListener("pointermove", function (e) {
+      if (!dragging) return;
+      var rect = previewImg.getBoundingClientRect();
+      var dx = (e.clientX - lastX) / (rect.width * segFrac);
+      var dy = (e.clientY - lastY) / rect.height;
+      cx = Math.min(1, Math.max(0, cx - dx));
+      cy = Math.min(1, Math.max(0, cy - dy));
+      lastX = e.clientX; lastY = e.clientY;
+    });
+    function endPreviewDrag() {
+      if (!dragging) return;
+      dragging = false;
+      previewImg.style.cursor = "grab";
+      sendCrop(targetIndex, cx, cy);
+    }
+    previewImg.addEventListener("pointerup", endPreviewDrag);
+    previewImg.addEventListener("pointercancel", endPreviewDrag);
+  })();
 })();
 </script>
 </body>

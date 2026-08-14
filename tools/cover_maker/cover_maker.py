@@ -233,6 +233,12 @@ def ensure_covers_db(conn):
             created_at TEXT NOT NULL
         )
     """)
+    # Migration fuer aeltere covers.db-Dateien: theme_name/author_name kamen
+    # erst mit dem Web-Store/Admin-Tool dazu (siehe tools/cover_maker/server).
+    existing_cols = {row[1] for row in conn.execute("PRAGMA table_info(covers)")}
+    for col in ("theme_name", "author_name"):
+        if col not in existing_cols:
+            conn.execute(f"ALTER TABLE covers ADD COLUMN {col} TEXT")
     conn.commit()
 
 

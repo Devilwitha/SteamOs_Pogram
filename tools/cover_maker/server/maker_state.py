@@ -85,6 +85,10 @@ class MakerSession:
         self.panels = new_default_panels()
         self.last_saved_cover_id = None
         self.last_touch = time.time()
+        # Login-Status fuers Admin-Tool (/admin) - an dieselbe Browser-Session
+        # gebunden wie der Cover-Maker-Zustand, damit kein zweites
+        # Session-System noetig ist.
+        self.is_admin = False
 
 
 def _purge_expired():

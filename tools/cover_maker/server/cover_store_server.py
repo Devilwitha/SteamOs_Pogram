@@ -3,7 +3,8 @@
 
 - "/"      Store: durchsucht/zeigt alle Cover (aus cover_maker.py UND aus
            dem Web-Maker gespeichert) mit Vorschaubildern, Suche, Download,
-           sowie direktem Hochladen fertiger Cover-Bilder.
+           sowie direktem Hochladen fertiger Cover-Bilder (Theme-Name und
+           Ersteller sind dabei Pflichtfelder und werden im Store angezeigt).
 - "/maker" Cover Maker: 1:1-Web-Variante von cover_maker.py - dieselbe
            Panel-Logik (Front/Seite1/Seite2/Rueckseite, Zuschnitt per Ziehen,
            Banner, Rueckseite mit Systemanforderungen/Kompatibilitaets-
@@ -14,6 +15,11 @@
            eine eigene, von anderen Benutzern unabhaengige Instanz (siehe
            maker_state.py) - mehrere Leute koennen gleichzeitig eigene
            Cover bauen, ohne sich gegenseitig zu beeinflussen.
+- "/admin" Admin-Tool: absichtlich nicht in der Navigation verlinkt (nur ein
+           winziger, kaum sichtbarer Link unten links auf Store/Maker) -
+           Login (Standard admin/admin, Zugangsdaten liegen gehasht in
+           covers.db und lassen sich im Admin-Bereich selbst aendern),
+           danach Liste/Suche/Bearbeiten/Loeschen aller Cover-Eintraege.
 
 Nutzt dieselbe Datenbank wie cover_maker.py/assign_game.py
 (tools/cover_maker/covers.db, Tabellen "covers" und "banner_templates").
@@ -25,11 +31,13 @@ Start (Windows):  python cover_store_server.py
 Danach im Browser http://127.0.0.1:8090 oeffnen - wird normalerweise
 automatisch geoeffnet. Server ist standardmaessig nur lokal erreichbar.
 """
+import hashlib
 import html
 import http.server
 import io
 import json
 import re
+import secrets
 import sqlite3
 import sys
 import time
@@ -39,21 +47,18 @@ import webbrowser
 from http.cookies import SimpleCookie
 from pathlib import Path
 
-from PIL import Image
+from PIL import Image, ImageDraw
 
 SERVER_DIR = Path(__file__).resolve().parent
 COVER_MAKER_DIR = SERVER_DIR.parent
-REPO_ROOT = COVER_MAKER_DIR.parent.parent
 
 sys.path.insert(0, str(COVER_MAKER_DIR))
 import cover_render  # noqa: E402 - framework-unabhaengig, keine Tkinter-Abhaengigkeit
 import maker_state  # noqa: E402
 
 DB_PATH = COVER_MAKER_DIR / "covers.db"
-GAMES_DB_PATH = REPO_ROOT / "steamOs" / "games.db"
 UPLOAD_DIR = SERVER_DIR / "uploads"
 THUMB_DIR = SERVER_DIR / "thumbnails"
-BANNER_TEMPLATES_DIR = COVER_MAKER_DIR / "banner_templates"
 
 HOST = "127.0.0.1"
 PORT = 8090
@@ -66,6 +71,8 @@ with open(SERVER_DIR / "index.html", encoding="utf-8") as _f:
     STORE_TEMPLATE = _f.read()
 with open(SERVER_DIR / "maker.html", encoding="utf-8") as _f:
     MAKER_TEMPLATE = _f.read()
+with open(SERVER_DIR / "admin.html", encoding="utf-8") as _f:
+    ADMIN_TEMPLATE = _f.read()
 
 
 def _escape(text):
@@ -101,7 +108,77 @@ def ensure_covers_db(conn):
             created_at TEXT NOT NULL
         )
     """)
+    # Migration fuer aeltere covers.db-Dateien: theme_name/author_name kamen
+    # erst mit dem Store/Admin-Tool dazu.
+    existing_cols = {row[1] for row in conn.execute("PRAGMA table_info(covers)")}
+    for col in ("theme_name", "author_name"):
+        if col not in existing_cols:
+            conn.execute(f"ALTER TABLE covers ADD COLUMN {col} TEXT")
     conn.commit()
+
+
+# -- Admin-Login (Zugangsdaten liegen gehasht in covers.db) -----------------
+DEFAULT_ADMIN_USERNAME = "admin"
+DEFAULT_ADMIN_PASSWORD = "admin"
+
+
+def _hash_password(password, salt):
+    return hashlib.sha256((salt + password).encode("utf-8")).hexdigest()
+
+
+def ensure_admin_auth(conn):
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS admin_auth (
+            id INTEGER PRIMARY KEY CHECK (id = 1),
+            username TEXT NOT NULL,
+            password_hash TEXT NOT NULL,
+            salt TEXT NOT NULL
+        )
+    """)
+    if conn.execute("SELECT 1 FROM admin_auth WHERE id = 1").fetchone() is None:
+        salt = secrets.token_hex(16)
+        conn.execute(
+            "INSERT INTO admin_auth (id, username, password_hash, salt) VALUES (1, ?, ?, ?)",
+            (DEFAULT_ADMIN_USERNAME, _hash_password(DEFAULT_ADMIN_PASSWORD, salt), salt),
+        )
+    conn.commit()
+
+
+def verify_admin_login(username, password):
+    conn = sqlite3.connect(DB_PATH)
+    try:
+        ensure_admin_auth(conn)
+        conn.row_factory = sqlite3.Row
+        row = conn.execute("SELECT * FROM admin_auth WHERE id = 1").fetchone()
+    finally:
+        conn.close()
+    if row is None or username != row["username"]:
+        return False
+    return secrets.compare_digest(_hash_password(password, row["salt"]), row["password_hash"])
+
+
+def set_admin_credentials(username, password):
+    conn = sqlite3.connect(DB_PATH)
+    try:
+        ensure_admin_auth(conn)
+        salt = secrets.token_hex(16)
+        conn.execute(
+            "UPDATE admin_auth SET username = ?, password_hash = ?, salt = ? WHERE id = 1",
+            (username, _hash_password(password, salt), salt),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def get_admin_username():
+    conn = sqlite3.connect(DB_PATH)
+    try:
+        ensure_admin_auth(conn)
+        row = conn.execute("SELECT username FROM admin_auth WHERE id = 1").fetchone()
+        return row[0] if row else DEFAULT_ADMIN_USERNAME
+    finally:
+        conn.close()
 
 
 def fetch_covers(query=None):
@@ -115,10 +192,12 @@ def fetch_covers(query=None):
                 """
                 SELECT * FROM covers
                 WHERE game_name LIKE ? COLLATE NOCASE
+                   OR theme_name LIKE ? COLLATE NOCASE
+                   OR author_name LIKE ? COLLATE NOCASE
                    OR file_path LIKE ? COLLATE NOCASE
                 ORDER BY created_at DESC
                 """,
-                (like, like),
+                (like, like, like, like),
             ).fetchall()
         return conn.execute("SELECT * FROM covers ORDER BY created_at DESC").fetchall()
     finally:
@@ -135,19 +214,7 @@ def fetch_cover(cover_id):
         conn.close()
 
 
-def fetch_games():
-    if not GAMES_DB_PATH.is_file():
-        return []
-    conn = sqlite3.connect(GAMES_DB_PATH)
-    try:
-        return conn.execute(
-            "SELECT uid, appid, name FROM games ORDER BY name COLLATE NOCASE"
-        ).fetchall()
-    finally:
-        conn.close()
-
-
-def insert_cover(file_path, game_uid, game_name, game_appid):
+def insert_cover(file_path, game_uid, game_name, game_appid, theme_name=None, author_name=None):
     width_cm = height_cm = dpi = None
     try:
         with Image.open(file_path) as img:
@@ -164,8 +231,9 @@ def insert_cover(file_path, game_uid, game_name, game_appid):
         ensure_covers_db(conn)
         cur = conn.execute(
             """
-            INSERT INTO covers (file_path, width_cm, height_cm, dpi, created_at, game_uid, game_name, game_appid)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO covers
+                (file_path, width_cm, height_cm, dpi, created_at, game_uid, game_name, game_appid, theme_name, author_name)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 str(Path(file_path).resolve()),
@@ -176,12 +244,50 @@ def insert_cover(file_path, game_uid, game_name, game_appid):
                 game_uid or None,
                 game_name or None,
                 game_appid,
+                theme_name or None,
+                author_name or None,
             ),
         )
         conn.commit()
         return cur.lastrowid
     finally:
         conn.close()
+
+
+def update_cover(cover_id, game_name, theme_name, author_name):
+    conn = sqlite3.connect(DB_PATH)
+    try:
+        ensure_covers_db(conn)
+        conn.execute(
+            "UPDATE covers SET game_name = ?, theme_name = ?, author_name = ? WHERE id = ?",
+            (game_name or None, theme_name or None, author_name or None, cover_id),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def delete_cover(cover_id):
+    conn = sqlite3.connect(DB_PATH)
+    try:
+        ensure_covers_db(conn)
+        row = conn.execute("SELECT file_path FROM covers WHERE id = ?", (cover_id,)).fetchone()
+        conn.execute("DELETE FROM covers WHERE id = ?", (cover_id,))
+        conn.commit()
+    finally:
+        conn.close()
+
+    if row is not None:
+        try:
+            Path(row[0]).unlink(missing_ok=True)
+        except OSError:
+            pass
+    thumb = THUMB_DIR / f"{cover_id}.jpg"
+    if thumb.is_file():
+        try:
+            thumb.unlink()
+        except OSError:
+            pass
 
 
 def fetch_banner_templates():
@@ -203,19 +309,6 @@ def fetch_banner_template(template_id):
         return conn.execute(
             "SELECT * FROM banner_templates WHERE id = ?", (template_id,)
         ).fetchone()
-    finally:
-        conn.close()
-
-
-def save_banner_template(name, file_path, console):
-    conn = sqlite3.connect(DB_PATH)
-    try:
-        ensure_covers_db(conn)
-        conn.execute(
-            "INSERT INTO banner_templates (name, file_path, console, created_at) VALUES (?, ?, ?, ?)",
-            (name, str(Path(file_path).resolve()), console, time.strftime("%Y-%m-%dT%H:%M:%S")),
-        )
-        conn.commit()
     finally:
         conn.close()
 
@@ -280,14 +373,6 @@ def _parse_multipart(content_type, body):
 
 
 # -- Store-Seite ("/") ----------------------------------------------------
-def _render_game_options(selected=""):
-    options = [f'<option value=""{" selected" if not selected else ""}>(kein Spiel verknuepfen)</option>']
-    for uid, appid, name in fetch_games():
-        sel = " selected" if uid == selected else ""
-        options.append(f'<option value="{_escape(uid)}" data-appid="{appid or 0}"{sel}>{_escape(name)}</option>')
-    return "".join(options)
-
-
 def _render_cards(covers):
     if not covers:
         return '<p class="empty-store">Keine Cover gefunden.</p>'
@@ -296,11 +381,13 @@ def _render_cards(covers):
     for cover in covers:
         thumb_url = f"/thumb/{cover['id']}"
         file_exists = Path(cover["file_path"]).is_file()
+        theme_html = _escape(cover["theme_name"]) if cover["theme_name"] else '<span class="unlinked">-</span>'
         game_html = (
             f'<span class="linked">{_escape(cover["game_name"])}</span>'
             if cover["game_name"]
             else '<span class="unlinked">nicht verknuepft</span>'
         )
+        author_html = _escape(cover["author_name"]) if cover["author_name"] else '<span class="unlinked">-</span>'
         dims = (
             f'{cover["width_cm"]:g}&times;{cover["height_cm"]:g}&nbsp;cm &middot; {cover["dpi"]}&nbsp;dpi'
             if cover["width_cm"] and cover["height_cm"]
@@ -322,7 +409,9 @@ def _render_cards(covers):
             f'<img src="{thumb_url}" alt="Cover #{cover["id"]}" loading="lazy">'
             "</a>"
             '<div class="card-body">'
-            f"<div class='card-title'>{game_html}</div>"
+            f"<div class='card-line'><span class='card-label'>Theme:</span> {theme_html}</div>"
+            f"<div class='card-line'><span class='card-label'>Spiele:</span> {game_html}</div>"
+            f"<div class='card-line'><span class='card-label'>Author:</span> {author_html}</div>"
             f"<div class='card-meta'>{dims}</div>"
             f"<div class='card-meta dim'>{created}</div>"
             f"<div class='card-actions'>{actions}</div>"
@@ -336,9 +425,124 @@ def render_store_page(query="", upload_message=""):
     covers = fetch_covers(query.strip() if query else None)
     page = STORE_TEMPLATE.replace("__QUERY__", _escape(query))
     page = page.replace("__UPLOAD_MESSAGE__", upload_message)
-    page = page.replace("__GAME_OPTIONS__", _render_game_options())
     page = page.replace("__CARDS__", _render_cards(covers))
     page = page.replace("__COUNT__", str(len(covers)))
+    return page
+
+
+# -- Admin-Seite ("/admin") -------------------------------------------------
+def _render_admin_rows(covers):
+    if not covers:
+        return '<tr><td colspan="7" class="empty-store">Keine Cover gefunden.</td></tr>'
+
+    rows = []
+    for cover in covers:
+        cid = cover["id"]
+        file_exists = Path(cover["file_path"]).is_file()
+        thumb_cell = (
+            f'<a href="/view/{cid}" target="_blank"><img class="admin-thumb" src="/thumb/{cid}" alt="Cover #{cid}"></a>'
+            if file_exists
+            else '<span class="missing">kein Bild</span>'
+        )
+        dims = (
+            f'{cover["width_cm"]:g}&times;{cover["height_cm"]:g}cm<br>{cover["dpi"]}dpi'
+            if cover["width_cm"] and cover["height_cm"]
+            else "-"
+        )
+        created = _escape(cover["created_at"]).replace("T", " ")
+        status = '<span class="linked">OK</span>' if file_exists else '<span class="missing">Datei fehlt</span>'
+
+        rows.append(f"""
+        <tr>
+          <td>{thumb_cell}</td>
+          <td class="uid">#{cid}</td>
+          <td>
+            <form method="POST" action="/admin/edit" class="admin-edit-form">
+              <input type="hidden" name="cover_id" value="{cid}">
+              <label>Theme</label>
+              <input type="text" name="theme_name" value="{_escape(cover['theme_name'] or '')}" placeholder="Theme-Name">
+              <label>Spiel</label>
+              <input type="text" name="game_name" value="{_escape(cover['game_name'] or '')}" placeholder="Spielname">
+              <label>Ersteller</label>
+              <input type="text" name="author_name" value="{_escape(cover['author_name'] or '')}" placeholder="Ersteller">
+              <button type="submit">SPEICHERN</button>
+            </form>
+          </td>
+          <td class="dim">{dims}</td>
+          <td class="dim">{created}</td>
+          <td>{status}</td>
+          <td>
+            <form method="POST" action="/admin/delete" onsubmit="return confirm('Cover #{cid} inkl. Datei endgueltig loeschen?')">
+              <input type="hidden" name="cover_id" value="{cid}">
+              <button type="submit" class="btn secondary">LOESCHEN</button>
+            </form>
+          </td>
+        </tr>
+        """)
+    return "".join(rows)
+
+
+def _render_admin_login():
+    return """
+    <div class="panel section" style="max-width:420px;margin:0 auto">
+      <h2 style="margin-bottom:14px">Admin-Login</h2>
+      <form method="POST" action="/admin/login">
+        <div class="field"><label>Benutzername</label><input type="text" name="username" autofocus required></div>
+        <div class="field" style="margin-top:10px"><label>Passwort</label><input type="password" name="password" required></div>
+        <button type="submit" style="margin-top:14px">ANMELDEN</button>
+      </form>
+    </div>
+    """
+
+
+def _render_admin_content(query):
+    covers = fetch_covers(query.strip() if query else None)
+    username = _escape(get_admin_username())
+    query_esc = _escape(query)
+    return f"""
+    <div class="panel section">
+      <h2 style="margin-bottom:14px">Suche</h2>
+      <form method="GET" action="/admin" class="inline-row">
+        <input type="search" name="q" value="{query_esc}" placeholder="Spiel, Theme, Ersteller oder Datei suchen...">
+        <button type="submit">Suchen</button>
+        <span class="count-badge">{len(covers)} Cover</span>
+      </form>
+    </div>
+
+    <div class="panel section">
+      <div class="table-scroll">
+        <table>
+          <thead>
+            <tr><th>Vorschau</th><th>ID</th><th>Metadaten</th><th>Format</th><th>Erstellt</th><th>Datei</th><th></th></tr>
+          </thead>
+          <tbody>
+            {_render_admin_rows(covers)}
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="panel section" style="max-width:480px">
+      <h2 style="margin-bottom:14px">Zugangsdaten aendern</h2>
+      <p class="hint" style="margin-top:0">Angemeldet als <strong>{username}</strong>.</p>
+      <form method="POST" action="/admin/credentials">
+        <div class="field"><label>Aktuelles Passwort</label><input type="password" name="current_password" required></div>
+        <div class="field" style="margin-top:10px"><label>Neuer Benutzername</label><input type="text" name="new_username" value="{username}" required></div>
+        <div class="field" style="margin-top:10px"><label>Neues Passwort</label><input type="password" name="new_password" required></div>
+        <div class="field" style="margin-top:10px"><label>Neues Passwort bestaetigen</label><input type="password" name="new_password_confirm" required></div>
+        <button type="submit" style="margin-top:14px">SPEICHERN</button>
+      </form>
+      <form method="POST" action="/admin/logout" style="margin-top:16px">
+        <button type="submit" class="btn secondary">ABMELDEN</button>
+      </form>
+    </div>
+    """
+
+
+def render_admin_page(session, query="", message=""):
+    body = _render_admin_content(query) if session.is_admin else _render_admin_login()
+    page = ADMIN_TEMPLATE.replace("__MESSAGE__", message)
+    page = page.replace("__BODY__", body)
     return page
 
 
@@ -480,7 +684,6 @@ def _render_banner_section(session):
     template_options = '<option value="">Vorlage waehlen...</option>' + "".join(
         f'<option value="{row[0]}">{_escape(row[1])} [{_escape(row[3] or "?")}]</option>' for row in templates
     )
-    console_options = "".join(f'<option value="{_escape(c)}">{_escape(c)}</option>' for c in cover_render.CONSOLE_OPTIONS)
 
     return f"""
     <div class="panel section">
@@ -500,13 +703,8 @@ def _render_banner_section(session):
         </form>
       </div>
       <div class="field-row">
-        <form method="POST" action="/maker/banner/save_template" class="field-row" style="flex:2;margin:0">
-          <div class="field"><label>Vorlagen-Name</label><input type="text" name="template_name" placeholder="z. B. Steam-Leiste"></div>
-          <div class="field"><label>Konsole</label><select name="console">{console_options}</select></div>
-          <div class="field" style="justify-content:flex-end"><button type="submit">ALS VORLAGE SPEICHERN</button></div>
-        </form>
         <form method="POST" action="/maker/banner/load_template" class="field-row" style="flex:1;margin:0">
-          <div class="field"><label>Gespeicherte Vorlagen</label><select name="template_id">{template_options}</select></div>
+          <div class="field"><label>Gespeicherte Vorlagen (in der Desktop-App angelegt)</label><select name="template_id">{template_options}</select></div>
           <div class="field" style="justify-content:flex-end"><button type="submit">LADEN</button></div>
         </form>
       </div>
@@ -544,10 +742,36 @@ def render_maker_page(session, build_message=""):
     page = page.replace("__DPI__", str(dpi))
     page = page.replace("__BANNER_SECTION__", banner_html)
     page = page.replace("__PANELS_SECTION__", panels_html)
-    page = page.replace("__GAME_OPTIONS__", _render_game_options())
     page = page.replace("__PREVIEW_TS__", str(time.time()))
     page = page.replace("__LAYOUT_JSON__", layout_json)
     return page
+
+
+def _draw_cutlines(image, panels, dpi):
+    """Zeichnet einen durchgezogenen Schneiderand plus gestrichelte
+    Faltlinien an jeder Panel-Grenze direkt auf das Bild - dieselbe Optik
+    wie die separate "_schneidelinien"-Referenzdatei von cover_maker.py,
+    nur dass diese Linien hier ins gespeicherte Cover selbst einbelichtet
+    werden: im Web-Maker erstellte Cover landen auf Wunsch immer als
+    Schneide-/Faltlinien-Version im Store (anders als am Desktop, wo das
+    "saubere" Cover fuer die Spielverknuepfung erhalten bleibt und die
+    Linien nur eine separate Zusatzdatei sind)."""
+    draw = ImageDraw.Draw(image)
+    line_px = max(1, round(dpi / 300))
+    draw.rectangle([0, 0, image.width - 1, image.height - 1], outline="black", width=line_px)
+
+    widths_px = [cover_render.cm_to_px(p.width_cm, dpi) for p in panels]
+    dash_len = max(4, round(dpi / 300 * 10))
+    gap_len = max(3, round(dpi / 300 * 6))
+    fold_cursor = 0
+    for w_px in widths_px[:-1]:
+        fold_cursor += w_px
+        y = 0
+        while y < image.height:
+            y_end = min(y + dash_len, image.height)
+            draw.line([fold_cursor, y, fold_cursor, y_end], fill="black", width=line_px)
+            y += dash_len + gap_len
+    return image
 
 
 class Handler(http.server.BaseHTTPRequestHandler):
@@ -592,6 +816,10 @@ class Handler(http.server.BaseHTTPRequestHandler):
             self._dispatch_maker_get(parts[1:], query)
             return
 
+        if parts[0] == "admin":
+            self._dispatch_admin_get(parts[1:], query)
+            return
+
         if parts[0] == "thumb" and len(parts) == 2 and parts[1].isdigit():
             self._serve_thumbnail(int(parts[1]))
             return
@@ -615,6 +843,10 @@ class Handler(http.server.BaseHTTPRequestHandler):
             self._dispatch_maker_post(parts[1:])
             return
 
+        if parts[:1] == ["admin"]:
+            self._dispatch_admin_post(parts[1:])
+            return
+
         if self.path == "/upload":
             form = self._read_form()
             message = self._handle_upload(form)
@@ -634,20 +866,17 @@ class Handler(http.server.BaseHTTPRequestHandler):
         if ext not in ALLOWED_IMAGE_EXTENSIONS:
             return f'<div class="message error">Nicht unterstuetztes Bildformat: {_escape(ext or "(keine Endung)")}</div>'
 
+        theme_name = (form.get("theme_name", [""])[0] or "").strip()
+        author_name = (form.get("author_name", [""])[0] or "").strip()
+        if not theme_name or not author_name:
+            return '<div class="message error">Bitte Theme-Name und Ersteller angeben.</div>'
+
         UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
         dest = UPLOAD_DIR / f"{uuid.uuid4().hex}{ext}"
         dest.write_bytes(upload["content"])
 
-        game_uid = (form.get("game_uid", [""])[0] or "").strip()
-        game_name = None
-        game_appid = None
-        if game_uid:
-            for uid, appid, name in fetch_games():
-                if uid == game_uid:
-                    game_name, game_appid = name, appid
-                    break
-
-        cover_id = insert_cover(dest, game_uid, game_name, game_appid)
+        game_name = (form.get("game_name", [""])[0] or "").strip() or None
+        cover_id = insert_cover(dest, None, game_name, None, theme_name, author_name)
         linked = f" und mit '{_escape(game_name)}' verknuepft" if game_name else ""
         return f'<div class="message success">Cover #{cover_id} hochgeladen{linked}.</div>'
 
@@ -772,23 +1001,27 @@ class Handler(http.server.BaseHTTPRequestHandler):
             return
 
         if rest == ["save"]:
-            game_uid = field("game_uid", "").strip()
+            game_name = field("game_name", "").strip() or None
+            theme_name = field("theme_name", "").strip()
+            author_name = field("author_name", "").strip()
+            if not theme_name or not author_name:
+                error = '<div class="message error">Bitte Theme-Name und Ersteller angeben.</div>'
+                self._respond_html(render_maker_page(session, build_message=error))
+                return
+
             with session.lock:
                 combined = cover_render.build_combined_image(
                     session.panels, session.height_cm, session.dpi, session.banner_image, session.banner_height_cm
                 )
                 dpi = session.dpi
+                # Im Web-Maker erstellte Cover werden immer mit eingezeichneten
+                # Schneide-/Faltlinien im Store gespeichert (siehe _draw_cutlines).
+                _draw_cutlines(combined, session.panels, dpi)
             UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
             dest = UPLOAD_DIR / f"{uuid.uuid4().hex}.png"
             combined.save(dest, dpi=(dpi, dpi))
 
-            game_name = game_appid = None
-            if game_uid:
-                for uid, appid, name in fetch_games():
-                    if uid == game_uid:
-                        game_name, game_appid = name, appid
-                        break
-            cover_id = insert_cover(dest, game_uid, game_name, game_appid)
+            cover_id = insert_cover(dest, None, game_name, None, theme_name, author_name)
             with session.lock:
                 session.last_saved_cover_id = cover_id
             self._redirect(f"/maker?saved={cover_id}")
@@ -818,19 +1051,6 @@ class Handler(http.server.BaseHTTPRequestHandler):
         if rest == ["banner", "height"]:
             with session.lock:
                 session.banner_height_cm = max(0.0, as_float("banner_height_cm", session.banner_height_cm))
-            self._redirect("/maker")
-            return
-
-        if rest == ["banner", "save_template"]:
-            name = field("template_name", "").strip() or "Banner"
-            console = field("console", cover_render.CONSOLE_OPTIONS[0])
-            with session.lock:
-                banner_img = session.banner_image
-            if banner_img is not None:
-                BANNER_TEMPLATES_DIR.mkdir(parents=True, exist_ok=True)
-                dest = BANNER_TEMPLATES_DIR / f"{uuid.uuid4().hex}.png"
-                banner_img.convert("RGB").save(dest)
-                save_banner_template(name, dest, console)
             self._redirect("/maker")
             return
 
@@ -953,6 +1173,89 @@ class Handler(http.server.BaseHTTPRequestHandler):
                         del panel.logo_names[li]
                     self._redirect("/maker")
                     return
+
+        self.send_response(404)
+        self._maybe_set_cookie()
+        self.end_headers()
+
+    # -- Admin-Tool --------------------------------------------------------
+    def _dispatch_admin_get(self, rest, query):
+        session = self._load_session()
+        if rest:
+            self.send_response(404)
+            self._maybe_set_cookie()
+            self.end_headers()
+            return
+        message = ""
+        if query.get("error") == ["1"]:
+            message = '<div class="message error">Benutzername oder Passwort falsch.</div>'
+        self._respond_html(render_admin_page(session, query=query.get("q", [""])[0], message=message))
+
+    def _dispatch_admin_post(self, rest):
+        session = self._load_session()
+        form = self._read_form()
+
+        def field(name, default=""):
+            return (form.get(name, [default]) or [default])[0]
+
+        if rest == ["login"]:
+            username = field("username", "").strip()
+            password = field("password", "")
+            if verify_admin_login(username, password):
+                with session.lock:
+                    session.is_admin = True
+                self._redirect("/admin")
+            else:
+                self._redirect("/admin?error=1")
+            return
+
+        if rest == ["logout"]:
+            with session.lock:
+                session.is_admin = False
+            self._redirect("/admin")
+            return
+
+        # Alles Weitere erfordert eine bestehende Anmeldung.
+        if not session.is_admin:
+            self._redirect("/admin")
+            return
+
+        if rest == ["credentials"]:
+            current_password = field("current_password", "")
+            new_username = field("new_username", "").strip()
+            new_password = field("new_password", "")
+            new_password_confirm = field("new_password_confirm", "")
+
+            if not verify_admin_login(get_admin_username(), current_password):
+                message = '<div class="message error">Aktuelles Passwort ist falsch.</div>'
+            elif not new_username or not new_password:
+                message = '<div class="message error">Benutzername und neues Passwort duerfen nicht leer sein.</div>'
+            elif new_password != new_password_confirm:
+                message = '<div class="message error">Neue Passwoerter stimmen nicht ueberein.</div>'
+            else:
+                set_admin_credentials(new_username, new_password)
+                message = '<div class="message success">Zugangsdaten aktualisiert.</div>'
+            self._respond_html(render_admin_page(session, message=message))
+            return
+
+        if rest == ["edit"]:
+            try:
+                cover_id = int(field("cover_id", "0"))
+            except ValueError:
+                cover_id = 0
+            update_cover(cover_id, field("game_name", ""), field("theme_name", ""), field("author_name", ""))
+            self._redirect("/admin")
+            return
+
+        if rest == ["delete"]:
+            try:
+                cover_id = int(field("cover_id", "0"))
+            except ValueError:
+                cover_id = 0
+            if cover_id:
+                delete_cover(cover_id)
+            self._redirect("/admin")
+            return
 
         self.send_response(404)
         self._maybe_set_cookie()
