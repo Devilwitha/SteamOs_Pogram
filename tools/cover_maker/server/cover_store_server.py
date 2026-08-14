@@ -36,6 +36,7 @@ import html
 import http.server
 import io
 import json
+import os
 import re
 import secrets
 import sqlite3
@@ -60,8 +61,11 @@ DB_PATH = COVER_MAKER_DIR / "covers.db"
 UPLOAD_DIR = SERVER_DIR / "uploads"
 THUMB_DIR = SERVER_DIR / "thumbnails"
 
-HOST = "127.0.0.1"
-PORT = 8090
+HOST = os.environ.get("COVERSTORE_HOST", "127.0.0.1")
+PORT = int(os.environ.get("COVERSTORE_PORT", "9090"))
+BASE_PATH = os.environ.get("COVERSTORE_BASE_PATH", "/coverstore-maker").rstrip("/")
+if BASE_PATH and not BASE_PATH.startswith("/"):
+    BASE_PATH = "/" + BASE_PATH
 
 ALLOWED_IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp", ".bmp"}
 THUMB_MAX = 320
@@ -77,6 +81,26 @@ with open(SERVER_DIR / "admin.html", encoding="utf-8") as _f:
 
 def _escape(text):
     return html.escape(str(text if text is not None else ""), quote=True)
+
+
+def _public_path(path):
+    if not path.startswith("/"):
+        path = "/" + path
+    return f"{BASE_PATH}{path}" if BASE_PATH else path
+
+
+def _prefix_html_urls(html_text):
+    if not BASE_PATH:
+        return html_text
+    html_text = re.sub(
+        r'((?:href|src|action)=["\'])/(?!/)',
+        rf'\1{BASE_PATH}/',
+        html_text,
+        flags=re.IGNORECASE,
+    )
+    html_text = html_text.replace('fetch("/', f'fetch("{BASE_PATH}/')
+    html_text = html_text.replace(' = "/', f' = "{BASE_PATH}/')
+    return html_text
 
 
 # -- Datenbank (covers + banner_templates) ------------------------------
@@ -783,7 +807,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
         if getattr(self, "_session_is_new", False):
             cookie = SimpleCookie()
             cookie[maker_state.SESSION_COOKIE] = self._session_id
-            cookie[maker_state.SESSION_COOKIE]["path"] = "/"
+            cookie[maker_state.SESSION_COOKIE]["path"] = BASE_PATH or "/"
             cookie[maker_state.SESSION_COOKIE]["httponly"] = True
             self.send_header("Set-Cookie", cookie[maker_state.SESSION_COOKIE].OutputString())
             self._session_is_new = False
@@ -803,9 +827,15 @@ class Handler(http.server.BaseHTTPRequestHandler):
         return {k: v for k, v in urllib.parse.parse_qs(raw_body.decode(errors="replace")).items()}
 
     # -- Routing -----------------------------------------------------------
+    def _request_path(self):
+        path = urllib.parse.urlsplit(self.path).path
+        if BASE_PATH and (path == BASE_PATH or path.startswith(BASE_PATH + "/")):
+            path = path[len(BASE_PATH):] or "/"
+        return path
+
     def do_GET(self):
         parsed = urllib.parse.urlsplit(self.path)
-        parts = [p for p in parsed.path.split("/") if p]
+        parts = [p for p in self._request_path().split("/") if p]
         query = urllib.parse.parse_qs(parsed.query)
 
         if not parts:
@@ -836,8 +866,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
         self.end_headers()
 
     def do_POST(self):
-        parsed = urllib.parse.urlsplit(self.path)
-        parts = [p for p in parsed.path.split("/") if p]
+        request_path = self._request_path()
+        parts = [p for p in request_path.split("/") if p]
 
         if parts[:1] == ["maker"]:
             self._dispatch_maker_post(parts[1:])
@@ -847,7 +877,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
             self._dispatch_admin_post(parts[1:])
             return
 
-        if self.path == "/upload":
+        if request_path == "/upload":
             form = self._read_form()
             message = self._handle_upload(form)
             self._respond_html(render_store_page(upload_message=message))
@@ -952,7 +982,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
     # -- Cover Maker: POST -----------------------------------------------
     def _redirect(self, location):
         self.send_response(303)
-        self.send_header("Location", location)
+        self.send_header("Location", _public_path(location))
         self.send_header("Content-Length", "0")
         self._maybe_set_cookie()
         self.end_headers()
@@ -1311,6 +1341,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
         self.wfile.write(data)
 
     def _respond_html(self, html_text):
+        html_text = _prefix_html_urls(html_text)
         encoded = html_text.encode("utf-8")
         self.send_response(200)
         self.send_header("Content-Type", "text/html; charset=utf-8")
@@ -1328,7 +1359,7 @@ def main():
     # gleichzeitig bedient werden, ohne dass ein einzelner offener Request
     # alle anderen blockiert.
     with http.server.ThreadingHTTPServer((HOST, PORT), Handler) as httpd:
-        url = f"http://{HOST}:{PORT}/"
+        url = f"http://{HOST}:{PORT}{_public_path('/')}"
         print(f"Cover Store laeuft unter {url}")
         try:
             webbrowser.open(url)
