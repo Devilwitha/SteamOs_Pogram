@@ -36,7 +36,7 @@ body{
   padding:28px 20px 60px;
 }
 .hud-top{
-  max-width:1200px;margin:0 auto 22px;
+  max-width:1300px;margin:0 auto 22px;
   text-align:center;
   font-size:.72rem;font-weight:700;letter-spacing:.3em;text-transform:uppercase;
   color:var(--cyan-dim);
@@ -44,7 +44,7 @@ body{
   border-bottom:1px solid var(--border);
 }
 .hud-top span{color:var(--cyan)}
-.wrap{max-width:1200px;margin:0 auto}
+.wrap{max-width:1300px;margin:0 auto}
 .navbar{display:flex;gap:10px;justify-content:center;margin:0 0 24px}
 .navlink{
   font:inherit;font-weight:700;font-size:.72rem;letter-spacing:.08em;text-transform:uppercase;
@@ -67,7 +67,7 @@ h1{
   margin-bottom:20px;
 }
 h2{
-  font-size:.82rem;color:var(--cyan);
+  font-size:.8rem;color:var(--cyan);
   padding-left:10px;border-left:3px solid var(--magenta);
   margin:0 0 14px;
 }
@@ -81,18 +81,27 @@ h2{
 }
 .section{margin-bottom:22px}
 .field-row{display:flex;flex-wrap:wrap;gap:14px;margin-bottom:4px}
-.field{display:flex;flex-direction:column;gap:4px;flex:1 1 160px}
-label{font-size:.7rem;color:var(--dim);text-transform:uppercase;letter-spacing:.06em}
+.field{display:flex;flex-direction:column;gap:4px;flex:1 1 150px}
+label{font-size:.68rem;color:var(--dim);text-transform:uppercase;letter-spacing:.06em}
+.field-inline-label{font-size:.68rem;color:var(--dim);text-transform:uppercase;letter-spacing:.06em;margin-right:6px}
 input[type=text],input[type=search]{
   font:inherit;padding:9px 12px;border-radius:4px;border:1px solid var(--border);
-  background:var(--input-bg);color:var(--text);
+  background:var(--input-bg);color:var(--text);width:100%;
 }
-input[type=file]{font:inherit;font-size:.8rem;color:var(--dim)}
+textarea{
+  font:inherit;font-size:.85rem;padding:8px 10px;border-radius:4px;border:1px solid var(--border);
+  background:var(--input-bg);color:var(--text);width:100%;resize:vertical;
+}
+input[type=file]{font:inherit;font-size:.78rem;color:var(--dim)}
 select{
   font:inherit;padding:8px 10px;border-radius:4px;border:1px solid var(--border);
   background:var(--input-bg);color:var(--text);width:100%;
 }
-input:focus,select:focus{outline:none;border-color:var(--cyan);box-shadow:0 0 0 3px rgba(0,229,255,.15)}
+input:focus,select:focus,textarea:focus{outline:none;border-color:var(--cyan);box-shadow:0 0 0 3px rgba(0,229,255,.15)}
+.inline-row{display:flex;gap:8px;align-items:center;margin:8px 0}
+.checkbox-label{display:flex;align-items:center;gap:6px;font-size:.78rem;color:var(--text);text-transform:none;letter-spacing:0;cursor:pointer}
+.checkbox-label input{cursor:pointer}
+.file-current{color:var(--dim);font-size:.76em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 button, .btn{
   font:inherit;font-weight:700;font-size:.74rem;letter-spacing:.04em;text-transform:uppercase;
   padding:9px 16px;cursor:pointer;color:#04141a;border:1px solid var(--cyan);
@@ -116,13 +125,37 @@ button:hover, .btn:hover{transform:translateY(-1px);box-shadow:0 0 18px rgba(0,2
 .success{border-color:var(--green);color:var(--green)}
 .error{border-color:var(--red);color:var(--red)}
 .hint{color:var(--dim);font-size:.82em;line-height:1.6;margin-top:10px}
+.hint-inline{color:var(--dim);font-size:.8em;font-style:italic;list-style:none}
 .panel-fields-grid{
   display:grid;
-  grid-template-columns:repeat(auto-fit,minmax(220px,1fr));
+  grid-template-columns:repeat(auto-fit,minmax(280px,1fr));
   gap:16px;
+  align-items:start;
 }
 .maker-panel{padding:14px 16px}
-.maker-panel h2{margin-bottom:10px}
+.panel-card-header{display:flex;justify-content:space-between;align-items:center;gap:10px;margin-bottom:12px}
+.panel-card-header form{display:flex;align-items:center}
+.panel-card-header select{width:auto}
+.crop-box{
+  position:relative;overflow:hidden;background:var(--input-bg);
+  border:1px solid var(--border);border-radius:4px;cursor:grab;
+  touch-action:none;margin-bottom:10px;max-height:220px;
+}
+.crop-box:active{cursor:grabbing}
+.crop-box img{width:100%;height:100%;object-fit:cover;display:block;user-select:none;-webkit-user-drag:none}
+.crop-hint{
+  position:absolute;left:0;right:0;bottom:0;text-align:center;
+  font-size:.62rem;letter-spacing:.04em;text-transform:uppercase;color:var(--text);
+  background:rgba(0,0,0,.45);padding:3px 0;pointer-events:none;opacity:0;transition:opacity .15s;
+}
+.crop-box:hover .crop-hint{opacity:1}
+.back-editor{margin-top:14px;padding-top:14px;border-top:1px dashed var(--border)}
+.logo-list{list-style:none;padding:0;margin:6px 0;display:flex;flex-direction:column;gap:4px}
+.logo-list li{display:flex;justify-content:space-between;align-items:center;gap:8px;font-size:.78rem;color:var(--text);background:var(--input-bg);border:1px solid var(--border);border-radius:4px;padding:4px 8px}
+.logo-list form{margin:0}
+.logo-remove{padding:2px 8px;font-size:.7rem;clip-path:none;border-radius:3px}
+.preview-frame{background:var(--input-bg);border:1px solid var(--border);border-radius:4px;padding:10px;overflow:auto;text-align:center}
+.preview-frame img{max-width:100%;height:auto}
 </style>
 </head>
 <body>
@@ -135,43 +168,100 @@ button:hover, .btn:hover{transform:translateY(-1px);box-shadow:0 0 18px rgba(0,2
 <h1>Cover Maker</h1>
 __BUILD_MESSAGE__
 
-<form method="POST" action="/build" enctype="multipart/form-data">
-
 <div class="panel section">
-  <h2 style="margin-bottom:14px">Format</h2>
-  <div class="field-row">
-    <div class="field"><label>Hoehe (cm)</label><input type="text" name="height_cm" value="10"></div>
-    <div class="field"><label>DPI</label><input type="text" name="dpi" value="300"></div>
-  </div>
+  <h2>Format</h2>
+  <form method="POST" action="/maker/format" class="field-row" style="margin:0">
+    <div class="field"><label>Hoehe (cm)</label>
+      <input type="text" name="height_cm" value="__HEIGHT_CM__" onchange="this.form.submit()"></div>
+    <div class="field"><label>DPI</label>
+      <input type="text" name="dpi" value="__DPI__" onchange="this.form.submit()"></div>
+  </form>
 </div>
 
-<div class="panel section">
-  <h2 style="margin-bottom:14px">Banner (optional, ueberlagert alle Panels oben)</h2>
-  <div class="field-row">
-    <div class="field"><label>Banner-Bild</label>
-      <input type="file" name="banner_image" accept=".png,.jpg,.jpeg,.webp,.bmp">
-    </div>
-    <div class="field"><label>Banner-Hoehe (cm)</label><input type="text" name="banner_height_cm" value="0"></div>
-  </div>
-</div>
+__BANNER_SECTION__
 
 <div class="section">
   <h2>Panels</h2>
   <div class="panel-fields-grid">
-__PANEL_FIELDS__
+__PANELS_SECTION__
   </div>
-  <p class="hint">Reihenfolge (links nach rechts): Seite 1 &middot; Front &middot; Seite 2 &middot; Rueckseite - genau wie in der Desktop-App.
-  Freihand-Bildausschnitt, Rueckseiten-Systemanforderungen/Logos und Banner-Vorlagen gibt es bisher nur dort; hier wird jedes
-  Panel-Bild automatisch zentriert zugeschnitten/eingepasst.</p>
+  <p class="hint">Reihenfolge (links nach rechts) entspricht der Position oben rechts an jedem Panel. Zuschnitt: im Vorschaubild
+  ziehen, um den sichtbaren Ausschnitt zu verschieben (wie in der Desktop-App). "Ist Rueckseite" schaltet den
+  Systemanforderungen-/Kompatibilitaets-/Logo-Editor frei; "Frontbild fortsetzen (Wrap)" laesst ein Nachbarpanel des
+  Front-Panels nahtlos denselben Bildausschnitt fortsetzen.</p>
 </div>
 
 <div class="panel section">
-  <h2 style="margin-bottom:14px">Mit Spiel verknuepfen (optional)</h2>
-  <select name="game_uid">__GAME_OPTIONS__</select>
+  <h2>Gesamtvorschau</h2>
+  <p class="hint" style="margin-top:0">Auch hier direkt ziehen, um den Ausschnitt zu verschieben - bei Front und darangehaengten
+  "Wrap"-Panels (z. B. Seite 2) wird automatisch der Ausschnitt des Front-Panels angepasst, da diese Panels ohnehin
+  denselben Bildausschnitt zeigen. Rueckseiten-Ausschnitt bitte im eigenen Panel-Vorschaubild oben verschieben.</p>
+  <div class="preview-frame">
+    <img id="combined-preview" src="/maker/preview?t=__PREVIEW_TS__" alt="Gesamtvorschau">
+  </div>
 </div>
 
-<button type="submit">Cover erstellen</button>
-</form>
+<div class="panel section">
+  <h2>Cover speichern</h2>
+  <form method="POST" action="/maker/save" class="field-row" style="margin:0">
+    <div class="field"><label>Mit Spiel verknuepfen (optional)</label><select name="game_uid">__GAME_OPTIONS__</select></div>
+    <div class="field" style="justify-content:flex-end"><button type="submit">COVER IM STORE SPEICHERN</button></div>
+  </form>
+  <form method="POST" action="/maker/reset" style="margin-top:12px">
+    <button type="submit" class="btn secondary">ALLES ZURUECKSETZEN</button>
+  </form>
 </div>
+</div>
+
+<script>
+(function () {
+  function refreshPreview() {
+    var img = document.getElementById("combined-preview");
+    if (img) img.src = "/maker/preview?t=" + Date.now();
+  }
+
+  document.querySelectorAll(".crop-box").forEach(function (box) {
+    var img = box.querySelector("img");
+    if (!img) return;
+    var index = box.dataset.index;
+    var cx = parseFloat(box.dataset.cx);
+    var cy = parseFloat(box.dataset.cy);
+    var dragging = false, lastX = 0, lastY = 0;
+
+    function apply() {
+      img.style.objectPosition = (cx * 100) + "% " + (cy * 100) + "%";
+    }
+    apply();
+
+    function endDrag() {
+      if (!dragging) return;
+      dragging = false;
+      fetch("/maker/panel/" + index + "/crop", {
+        method: "POST",
+        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        body: "center_x=" + cx.toFixed(4) + "&center_y=" + cy.toFixed(4),
+      }).then(refreshPreview);
+    }
+
+    box.addEventListener("pointerdown", function (e) {
+      dragging = true; lastX = e.clientX; lastY = e.clientY;
+      box.setPointerCapture(e.pointerId);
+      e.preventDefault();
+    });
+    box.addEventListener("pointermove", function (e) {
+      if (!dragging) return;
+      var rect = box.getBoundingClientRect();
+      var dx = (e.clientX - lastX) / rect.width;
+      var dy = (e.clientY - lastY) / rect.height;
+      cx = Math.min(1, Math.max(0, cx - dx));
+      cy = Math.min(1, Math.max(0, cy - dy));
+      lastX = e.clientX; lastY = e.clientY;
+      apply();
+    });
+    box.addEventListener("pointerup", endDrag);
+    box.addEventListener("pointercancel", endDrag);
+  });
+})();
+</script>
 </body>
 </html>
