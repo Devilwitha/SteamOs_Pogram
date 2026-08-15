@@ -200,6 +200,13 @@ wach, uebernimmt `steamOs/pico_client.py` den Spielstart ganz normal wie
 gewohnt - am Ablauf selbst aendert sich nichts, es kommt nur die
 Aufweck-Verzoegerung hinzu.
 
+Bei angeschlossenem LCD ist dieser Ablauf live mitverfolgbar (Zeile 1 bleibt
+dabei durchgehend der Spielname): "Tag erkannt" -> nach `WOL_GRACE_MS` ohne
+Reaktion von SteamOS "Keine Antwort" -> "Sende WOL..." (Magic Packet wird
+verschickt) -> "Warte auf PC..." (bis SteamOS antwortet oder erneut gesendet
+wird) -> sobald SteamOS antwortet ganz normal "An SteamOS..." und danach
+"Spiel gestartet" (siehe `ping_server._wol_phase()`/`_WOL_ZEILE2`).
+
 Voraussetzungen auf PC-Seite (jeweils einmalig einzurichten, nicht Teil
 dieses Repos):
 
