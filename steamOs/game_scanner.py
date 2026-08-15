@@ -124,6 +124,10 @@ def ensure_db(conn):
         conn.execute("ALTER TABLE games ADD COLUMN color TEXT")
     if "audio_path" not in existing_cols:
         conn.execute("ALTER TABLE games ADD COLUMN audio_path TEXT")
+    if "audio_enabled" not in existing_cols:
+        # Default 1 (an): bereits hochgeladene Sounds bleiben nach diesem
+        # Upgrade unveraendert aktiv, statt stillschweigend zu verstummen.
+        conn.execute("ALTER TABLE games ADD COLUMN audio_enabled INTEGER NOT NULL DEFAULT 1")
     conn.commit()
 
 

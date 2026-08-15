@@ -146,19 +146,34 @@ input[type=file]{font:inherit;font-size:.76rem;color:var(--dim);max-width:160px}
 <div class="field"><label>PC-IP</label><input type="text" name="pc_ip" id="pc_ip" value="__PC_IP__" placeholder="z.B. 192.168.178.50"></div>
 <div class="field"><label>Port</label><input type="number" name="pc_port" id="pc_port" value="__PC_PORT__" style="min-width:80px"></div>
 <div class="field"><label>Token</label><input type="password" name="token" id="token" value="__TOKEN__" placeholder="siehe config.json"></div>
+<div class="field"><label>PC-MAC (fuer Aufwecken)</label><input type="text" name="pc_mac" id="pc_mac" value="__PC_MAC__" placeholder="AA:BB:CC:DD:EE:FF"></div>
 <button type="submit">Speichern</button>
 </div>
 </form>
 <p class="hint">Muss einmalig eingerichtet werden: IP und Port von steamOs/gui/gui_server.py auf dem PC
-(Standardport 8080), sowie das dort in config.json unter "remote_control_token" hinterlegte Token.
+(Standardport 8090), sowie das dort in config.json unter "remote_control_token" hinterlegte Token.
 Ohne passendes Token lehnt der PC alle Anfragen von hier ab.</p>
+<p class="hint">PC-MAC (optional): MAC-Adresse der Netzwerkkarte des PCs (kabelgebunden empfohlen).
+Ist sie hinterlegt, weckt der Pico den PC per Wake-on-LAN, sobald ein verknuepfter Tag
+aufliegt, aber SteamOS laenger nicht antwortet (z. B. weil der PC schlaeft) - dafuer
+muss Wake-on-LAN im BIOS/UEFI sowie am Netzwerkadapter des PCs aktiviert sein.</p>
 </div>
 
 <div id="control-sections" style="display:none">
+<h2>Sound-Modus</h2>
+<div class="panel card">
+<form id="audio-mode-form" class="inline-form" style="gap:22px;flex-wrap:wrap">
+<label class="inline-form" style="gap:6px"><input type="radio" name="mode" value="songs"> Einzelne Songs je Spiel</label>
+<label class="inline-form" style="gap:6px"><input type="radio" name="mode" value="boot_sound"> Ein Boot-Sound fuer alle Spiele</label>
+<label class="inline-form" style="gap:6px"><input type="radio" name="mode" value="video"> Ein Video (Vollbild) fuer alle Spiele</label>
+</form>
+<div id="media-section"></div>
+</div>
+
 <h2>Spiele</h2>
 <div class="panel">
 <table>
-<thead><tr><th>Name</th><th>Status</th><th>UID</th><th>Farbe</th><th>Sound</th><th></th></tr></thead>
+<thead><tr><th>Name</th><th>Status</th><th>UID</th><th>Farbe</th><th id="sound-th">Sound</th><th></th></tr></thead>
 <tbody id="games-body"><tr><td colspan="6" class="empty">Lade...</td></tr></tbody>
 </table>
 </div>
@@ -225,32 +240,75 @@ async function afterAction(resultPromise) {
   return result;
 }
 
-function renderGames(games) {
+function renderGames(games, showAudio) {
   gamesCache = games;
+  document.getElementById("sound-th").style.display = showAudio ? "" : "none";
   const body = document.getElementById("games-body");
+  const colspan = showAudio ? 6 : 5;
   if (!games.length) {
-    body.innerHTML = "<tr><td colspan='6' class='empty'>Keine Spiele gefunden.</td></tr>";
+    body.innerHTML = `<tr><td colspan='${colspan}' class='empty'>Keine Spiele gefunden.</td></tr>`;
     return;
   }
   body.innerHTML = games.map(g => {
     const color = g.color || "#00e5ff";
-    const audioHtml = g.has_audio
-      ? `<div class="audio-current">&#127925; ${esc(g.audio_name)}</div>
-         <div class="inline">
-           <button type="button" data-action="play" data-uid="${esc(g.uid)}">&#9658;</button>
-           <button type="button" class="secondary" data-action="stop" data-uid="${esc(g.uid)}">&#9632;</button>
-           <button type="button" class="secondary" data-action="remove-audio" data-uid="${esc(g.uid)}">&#10005;</button>
-         </div>`
-      : `<span class="unlinked">kein Sound</span>`;
+    let audioCell = "";
+    if (showAudio) {
+      const audioHtml = g.has_audio
+        ? `<div class="audio-current">&#127925; ${esc(g.audio_name)}</div>
+           <div class="inline">
+             <button type="button" data-action="play" data-uid="${esc(g.uid)}">&#9658;</button>
+             <button type="button" class="secondary" data-action="stop" data-uid="${esc(g.uid)}">&#9632;</button>
+             <button type="button" class="${g.audio_enabled ? "" : "secondary"}" data-action="toggle-audio" data-uid="${esc(g.uid)}" data-enabled="${g.audio_enabled ? "1" : "0"}" title="Automatische Wiedergabe beim Tag-Start umschalten">${g.audio_enabled ? "Aktiv" : "Inaktiv"}</button>
+             <button type="button" class="secondary" data-action="remove-audio" data-uid="${esc(g.uid)}">&#10005;</button>
+           </div>`
+        : `<span class="unlinked">kein Sound</span>`;
+      audioCell = `<td class="audio-cell">${audioHtml}<input type="file" accept=".mp3,.wav,.ogg,.flac,.m4a" data-action="upload" data-uid="${esc(g.uid)}"></td>`;
+    }
     return `<tr>
       <td>${esc(g.name)}</td>
       <td class="badge">${g.installed ? "installiert" : "nicht installiert"}</td>
       <td class="uid">${esc(g.uid)}</td>
       <td><input type="color" value="${color}" data-action="color" data-uid="${esc(g.uid)}"></td>
-      <td class="audio-cell">${audioHtml}<input type="file" accept=".mp3,.wav,.ogg,.flac,.m4a" data-action="upload" data-uid="${esc(g.uid)}"></td>
+      ${audioCell}
       <td><button type="button" data-action="select" data-uid="${esc(g.uid)}">An Pico senden</button></td>
     </tr>`;
   }).join("");
+}
+
+function renderMediaControls(hasFile, name, icon, emptyLabel, kind, accept) {
+  const current = hasFile
+    ? `<div class="audio-current">${icon} ${esc(name)}</div>
+       <div class="inline">
+         <button type="button" data-media-action="play" data-kind="${kind}">&#9658;</button>
+         <button type="button" class="secondary" data-media-action="stop" data-kind="${kind}">&#9632;</button>
+         <button type="button" class="secondary" data-media-action="remove" data-kind="${kind}">&#10005;</button>
+       </div>`
+    : `<span class="unlinked">${emptyLabel}</span>`;
+  return `<div style="margin-top:14px">${current}
+    <input type="file" accept="${accept}" data-media-action="upload" data-kind="${kind}" style="margin-top:8px">
+  </div>`;
+}
+
+function renderAudioMode(state) {
+  const mode = state.audio_mode || "songs";
+  document.querySelectorAll('#audio-mode-form input[name="mode"]').forEach(el => {
+    el.checked = el.value === mode;
+  });
+
+  const section = document.getElementById("media-section");
+  if (mode === "boot_sound") {
+    section.innerHTML = renderMediaControls(
+      state.has_boot_sound, state.boot_sound_name, "&#127925;",
+      "Kein Boot-Sound hinterlegt", "boot_sound", ".mp3,.wav,.ogg,.flac,.m4a"
+    );
+  } else if (mode === "video") {
+    section.innerHTML = renderMediaControls(
+      state.has_video, state.video_name, "&#127916;",
+      "Kein Video hinterlegt", "video", ".mp4,.mkv,.webm,.avi,.mov"
+    );
+  } else {
+    section.innerHTML = "";
+  }
 }
 
 function renderTags(tags, picoReachable, games) {
@@ -294,9 +352,38 @@ async function loadState() {
     showMessage(result.message || "Zustand konnte nicht geladen werden.", false);
     return;
   }
-  renderGames(result.games || []);
+  renderAudioMode(result);
+  const showAudio = (result.audio_mode || "songs") === "songs";
+  renderGames(result.games || [], showAudio);
   renderTags(result.tags || [], result.pico_reachable, result.games || []);
 }
+
+document.getElementById("audio-mode-form").addEventListener("change", ev => {
+  if (ev.target.name === "mode") {
+    afterAction(apiPostJson("/api/set_audio_mode", { mode: ev.target.value }));
+  }
+});
+
+document.getElementById("media-section").addEventListener("click", ev => {
+  const el = ev.target.closest("button[data-media-action]");
+  if (!el) return;
+  const kind = el.dataset.kind;
+  const action = el.dataset.mediaAction;
+  if (action === "play") afterAction(apiPostJson(`/api/play_${kind}`, {}));
+  else if (action === "stop") afterAction(apiPostJson(`/api/stop_${kind}`, {}));
+  else if (action === "remove") afterAction(apiPostJson(`/api/remove_${kind}`, {}));
+});
+
+document.getElementById("media-section").addEventListener("change", ev => {
+  const el = ev.target;
+  if (el.dataset.mediaAction === "upload" && el.files[0]) {
+    const kind = el.dataset.kind;
+    const fieldName = kind === "video" ? "video_file" : "boot_sound_file";
+    const fd = new FormData();
+    fd.append(fieldName, el.files[0]);
+    afterAction(apiFetch(`/api/set_${kind}`, { method: "POST", body: fd }));
+  }
+});
 
 document.getElementById("games-body").addEventListener("change", ev => {
   const el = ev.target;
@@ -317,6 +404,7 @@ document.getElementById("games-body").addEventListener("click", ev => {
   if (el.dataset.action === "play") afterAction(apiPostJson("/api/play_game_audio", { uid }));
   else if (el.dataset.action === "stop") afterAction(apiPostJson("/api/stop_game_audio", {}));
   else if (el.dataset.action === "remove-audio") afterAction(apiPostJson("/api/remove_game_audio", { uid }));
+  else if (el.dataset.action === "toggle-audio") afterAction(apiPostJson("/api/toggle_game_audio", { uid, enabled: el.dataset.enabled !== "1" }));
   else if (el.dataset.action === "select") afterAction(apiPostJson("/api/select_game", { uid }));
 });
 

@@ -91,6 +91,8 @@ Tabelle `games`:
 | `install_path` | Pfad zum installierten Spiel, nur gesetzt wenn `installed = 1` |
 | `launch_command` | `steam -applaunch <appid>`, nur gesetzt wenn `installed = 1` (startet das Spiel inkl. Proton-Kompatibilitaetsschicht ueber den Steam-Client) |
 | `color` | Optionale, in der GUI zugewiesene Farbe (Hex, z. B. `#ff8800`) fuer den [Led_Pico](../Led_Pico) - wird von `game_scanner.py` beim erneuten Scannen **nicht** ueberschrieben |
+| `audio_path` | Pfad zur in der GUI hochgeladenen Sound-Datei (siehe `gui/gui_server.py`), oder `NULL` ohne hinterlegten Sound - wird beim erneuten Scannen **nicht** ueberschrieben |
+| `audio_enabled` | `1` (Standard) = Sound wird beim Tag-Start automatisch abgespielt, `0` = Datei bleibt erhalten, wird aber nur noch manuell (Test-Play-Button) abgespielt - per "Aktiv"/"Inaktiv"-Button in der GUI umschaltbar |
 | `last_scanned` | Zeitpunkt des letzten Scans |
 
 Manuell ausfuehren:
@@ -131,7 +133,8 @@ des Dienstes noetig:
 python3 steamOs/gui/gui_server.py
 ```
 
-Startet einen lokalen Webserver (`http://localhost:8080`) und versucht,
+Startet einen lokalen Webserver (`http://localhost:8090`, siehe `gui_port`
+in `config.json`) und versucht,
 ihn automatisch im Standardbrowser zu oeffnen (Desktop-Modus) - klappt das
 nicht (z. B. kein Standardbrowser registriert), einfach die Adresse von
 Hand im Browser aufrufen. Das HTML liegt in [`gui/index.html`](gui/index.html)
@@ -332,6 +335,7 @@ weiter, ohne dass das sonst irgendwelche Auswirkungen hat.
   "udp_port": 5006,
   "interval_seconds": 3,
   "gui_bind": "127.0.0.1",
+  "gui_port": 8090,
   "remote_control_token": ""
 }
 ```
@@ -348,6 +352,9 @@ weiter, ohne dass das sonst irgendwelche Auswirkungen hat.
   genutzt werden soll - **oeffnet dann Schreibzugriff (Spiele starten,
   Tags loeschen, Sounds ersetzen, ...) fuers gesamte LAN**, siehe
   `remote_control_token`.
+- `gui_port`: Auf welchem Port `gui_server.py` lauscht. Standard `8090`
+  (nicht `8080`, da dieser Port auf SteamOS bereits vom clientinternen
+  `steamwebhelper` von Steam selbst belegt ist).
 - `remote_control_token`: Leer = Fernzugriff komplett gesperrt (sicherer
   Default, auch wenn `gui_bind` auf `"0.0.0.0"` steht). Ein beliebiger,
   selbst gewaehlter Text aktiviert ihn - jede Anfrage, die nicht von

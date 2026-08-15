@@ -45,5 +45,5 @@ echo "  journalctl --user -u steamos-gui.service -f"
 echo "  journalctl --user -u steamos-lilygo-monitor.service -f"
 echo "  journalctl --user -u steamos-game-scanner.service -f"
 echo
-echo "GUI erreichbar unter http://127.0.0.1:8080/ (bzw. im LAN, falls gui_bind in config.json gesetzt ist)."
+echo "GUI erreichbar unter http://127.0.0.1:8090/ (bzw. im LAN, falls gui_bind in config.json gesetzt ist)."
 echo "LilyGo-Statusdisplay (falls vorhanden/konfiguriert) ist optional - laeuft ohne, ohne Fehler zu werfen."

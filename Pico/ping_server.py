@@ -52,9 +52,16 @@ HTTP (Port 80): "/" liefert die Statusseite (dark/modern), "/status.json"
 den aktuellen Status inkl. Tag-Liste als JSON, "/control" die Steuer-Seite
 (Spiele/Tags/Sounds bedienen wie in der SteamOS-GUI, siehe control.html)
 und "/control/settings" (POST) speichert deren Verbindungseinstellungen
-(PC-Adresse/Token, siehe remote_config.py). Die Steuer-Seite selbst spricht
-danach direkt mit steamOs/gui/gui_server.py auf dem PC - der Pico leitet
-dabei keine Daten durch, siehe control.html.
+(PC-Adresse/Token/MAC, siehe remote_config.py). Die Steuer-Seite selbst
+spricht danach direkt mit steamOs/gui/gui_server.py auf dem PC - der Pico
+leitet dabei keine Daten durch, siehe control.html.
+
+Wake-on-LAN: liegt ein mit einem Spiel verknuepfter Tag laenger unbeantwortet
+auf (SteamOS also offenbar nicht erreichbar, z. B. weil der PC schlaeft),
+weckt _maybe_send_wol() den PC per Magic Packet - siehe wol.py sowie das
+Feld "pc_mac" in remote_config.py (per /control einzurichten). Ist danach
+gestartet der PC wieder erreichbar, laeuft der Spielstart ganz normal ueber
+steamOs/pico_client.py wie gewohnt.
 
 Sind die beiden optionalen Status-LEDs angeschlossen (siehe main.py/README:
 rot/gruen), zeigen sie unabhaengig vom LCD immer den aktuellen Tag-Zustand:
@@ -72,6 +79,12 @@ gestartet" (per STARTED:<uid> bestaetigt, siehe _STATUS_ZEILE2/
 tag_manager._status_locked()). Bei einer noch nicht verknuepften Karte
 steht dort "Unbekannter Tag", und solange keine Karte aufliegt der
 Bereitschafts-Bildschirm ("System bereit" + IP).
+
+Bleibt "Tag erkannt" laenger als WOL_GRACE_MS unveraendert (SteamOS
+antwortet also gar nicht - siehe Wake-on-LAN oben), durchlaeuft Zeile 2
+stattdessen "Keine Antwort" -> "Sende WOL..." -> "Warte auf PC..." (siehe
+_wol_phase()/_WOL_ZEILE2), bis SteamOS antwortet und die normale Anzeige
+("An SteamOS..."/"Spiel gestartet") wieder uebernimmt.
 """
 import socket
 import select
@@ -84,6 +97,8 @@ import ujson as json
 import tag_manager
 import status_server
 import net_state
+import remote_config
+import wol
 
 TCP_PORT = 5005
 HTTP_PORT = 80
@@ -104,6 +119,20 @@ MAX_HTTP_BODY = 4096
 # auftretender WLAN-Ausfall unbemerkt bleiben und der Pico unerreichbar
 # haengen bleiben.
 WLAN_CHECK_INTERVAL_MS = 30_000
+
+# Siehe _maybe_send_wol(): wie lange ein verknuepfter Tag unbeantwortet
+# (Status "erkannt", siehe tag_manager._status_locked) aufliegen muss, bevor
+# das erste Magic Packet gesendet wird - deutlich laenger als ein normaler
+# Poll-Zyklus von steamOs/pico_client.py (Standard alle 3s), damit ein
+# wacher PC nicht faelschlich als schlafend behandelt wird. Danach wird in
+# WOL_RESEND_MS-Abstaenden erneut gesendet, bis SteamOS antwortet.
+WOL_GRACE_MS = 6_000
+WOL_RESEND_MS = 15_000
+# Wie lange (ms) die LCD-Meldung "Sende WOL..." nach einem tatsaechlich
+# gesendeten Magic Packet stehen bleibt, bevor auf "Warte auf PC..."
+# gewechselt wird (siehe _wol_phase()) - rein kosmetisch fuers LCD, ohne
+# Einfluss auf WOL_RESEND_MS selbst.
+WOL_NOTICE_MS = 2_000
 
 
 def _handle_command(command):
@@ -196,12 +225,24 @@ _STATUS_ZEILE2 = {
     "gestartet": "Spiel gestartet",
 }
 
+# Zeile 2 je Wake-on-LAN-Phase (siehe _wol_phase()) - ersetzt waehrend des
+# Wartens auf einen schlafenden PC den obigen "erkannt"-Eintrag ("Tag
+# erkannt"), damit auf dem LCD sichtbar ist, warum der Start laenger
+# dauert statt einfach bei "Tag erkannt" haengen zu bleiben.
+_WOL_ZEILE2 = {
+    "keine_antwort": "Keine Antwort",
+    "gesendet": "Sende WOL...",
+    "warte": "Warte auf PC...",
+}
 
-def _lcd_status_text(current, my_ip):
+
+def _lcd_status_text(current, my_ip, wol_phase=None):
     """Ermittelt (zeile1, zeile2) fuers LCD aus dem aktuell aufliegenden
     Tag (siehe tag_manager.get_current()). Liegt keine Karte auf, wird
     der Bereitschafts-Bildschirm angezeigt - so bleibt das LCD auch im
-    Leerlauf sinnvoll belegt statt beim letzten Zufallszustand zu bleiben."""
+    Leerlauf sinnvoll belegt statt beim letzten Zufallszustand zu bleiben.
+    wol_phase (siehe _wol_phase()) geht bei laufender Wake-on-LAN-Wartezeit
+    der normalen Status-Anzeige vor."""
     if current is None:
         return "System bereit", my_ip
 
@@ -212,6 +253,8 @@ def _lcd_status_text(current, my_ip):
         return "Unbekannter Tag", "UID:" + (current.get("uid") or "")
 
     if game_name:
+        if wol_phase:
+            return game_name, _WOL_ZEILE2[wol_phase]
         zeile2 = _STATUS_ZEILE2.get(current.get("status"), "Tag erkannt")
         return game_name, zeile2
 
@@ -324,6 +367,77 @@ def _serve(my_ip, hostname):
                 _handle_http_client(cl, my_ip, hostname)
 
 
+# Zustand fuer _maybe_send_wol(): fuer welche Spiel-UID gerade auf eine
+# Reaktion von SteamOS gewartet wird, seit wann, und wann zuletzt ein
+# Magic Packet dafuer gesendet wurde.
+_wol_game_uid = None
+_wol_first_seen_ms = 0
+_wol_last_sent_ms = 0
+
+
+def _maybe_send_wol(current, now):
+    """Weckt den PC per Wake-on-LAN, wenn ein mit einem Spiel verknuepfter
+    Tag aufliegt, SteamOS aber seit WOL_GRACE_MS nicht einmal per TAG?
+    danach gefragt hat (Status bleibt auf "erkannt", siehe
+    tag_manager._status_locked()) - typischerweise, weil pico_client.py
+    wegen Schlafmodus des PCs nicht laeuft. Antwortet SteamOS
+    zwischenzeitlich (Status wechselt auf "gesendet"/"gestartet"), wird der
+    Wartezustand zurueckgesetzt. Ohne hinterlegte PC-MAC (siehe
+    remote_config.py, per /control einzurichten) ein No-Op."""
+    global _wol_game_uid, _wol_first_seen_ms, _wol_last_sent_ms
+
+    game_uid = current.get("game_uid") if current else None
+    status = current.get("status") if current else None
+
+    if not game_uid or status != "erkannt":
+        _wol_game_uid = None
+        return
+
+    if game_uid != _wol_game_uid:
+        _wol_game_uid = game_uid
+        _wol_first_seen_ms = now
+        _wol_last_sent_ms = 0
+        return
+
+    if time.ticks_diff(now, _wol_first_seen_ms) < WOL_GRACE_MS:
+        return
+    if _wol_last_sent_ms and time.ticks_diff(now, _wol_last_sent_ms) < WOL_RESEND_MS:
+        return
+
+    mac = remote_config.get().get("pc_mac")
+    if not mac:
+        return
+
+    if wol.send(mac):
+        print("WOL: Magic Packet gesendet an", mac, "(Spiel-UID", game_uid, ")")
+        _wol_last_sent_ms = now
+
+
+def _wol_phase(game_uid, now):
+    """Fuers LCD (siehe _lcd_status_text): in welcher Wake-on-LAN-Phase
+    sich die uebergebene Spiel-UID gerade befindet, rein aus dem von
+    _maybe_send_wol() gefuehrten Zustand abgeleitet (kein eigener Zustand
+    noetig) - oder None, wenn dafuer aktuell keine WOL-Verfolgung laeuft
+    (kein solcher Tag aufliegt, oder die WOL_GRACE_MS-Schonfrist seit dem
+    erstmaligen Erkennen noch nicht um ist, siehe dort):
+    "keine_antwort": Schonfrist um, aber noch kein Magic Packet gesendet
+        (fehlt z. B. die PC-MAC in remote_config.py, bleibt dieser Zustand
+        dauerhaft bestehen - es wird nie eins gesendet).
+    "gesendet": ein Magic Packet wurde vor kurzem (< WOL_NOTICE_MS)
+        gesendet.
+    "warte": seit dem letzten gesendeten Magic Packet vergangen, bis
+        SteamOS antwortet oder WOL_RESEND_MS erneut gesendet wird."""
+    if game_uid != _wol_game_uid:
+        return None
+    if time.ticks_diff(now, _wol_first_seen_ms) < WOL_GRACE_MS:
+        return None
+    if not _wol_last_sent_ms:
+        return "keine_antwort"
+    if time.ticks_diff(now, _wol_last_sent_ms) < WOL_NOTICE_MS:
+        return "gesendet"
+    return "warte"
+
+
 def _update_status_leds(current, led_rot, led_gruen):
     """Zwei einfache Status-LEDs (siehe README): gruen leuchtet nur, wenn
     ein Tag aufliegt UND SteamOS den Spielstart bereits per
@@ -371,20 +485,23 @@ def _background_loop(my_ip, lcd=None, led_rot=None, led_gruen=None):
 
             current = tag_manager.get_current()
             _update_status_leds(current, led_rot, led_gruen)
+            _maybe_send_wol(current, now)
 
             if lcd is not None:
+                wol_phase = _wol_phase(current.get("game_uid"), now) if current else None
                 state = (
                     (
                         current.get("uid"),
                         current.get("game_uid"),
                         current.get("game_name"),
                         current.get("status"),
+                        wol_phase,
                     )
                     if current
                     else None
                 )
                 if state != last_lcd_state:
-                    zeile1, zeile2 = _lcd_status_text(current, my_ip)
+                    zeile1, zeile2 = _lcd_status_text(current, my_ip, wol_phase)
                     _lcd_write(lcd, zeile1, zeile2)
                     last_lcd_state = state
 

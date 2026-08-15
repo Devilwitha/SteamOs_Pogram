@@ -41,18 +41,36 @@ GUI_DIR = Path(__file__).resolve().parent
 STEAMOS_DIR = GUI_DIR.parent
 sys.path.insert(0, str(STEAMOS_DIR))
 
+import audio_config  # noqa: E402
 import audio_player  # noqa: E402
 import game_scanner  # noqa: E402
 import pico_link  # noqa: E402
+import video_player  # noqa: E402
 
 DB_PATH = STEAMOS_DIR / "games.db"
 AUDIO_DIR = STEAMOS_DIR / "audio"
+VIDEO_DIR = STEAMOS_DIR / "video"
 HOST = "127.0.0.1"
-PORT = 8080
+DEFAULT_PORT = 8090
 # Diese Endungen werden beim Hochladen akzeptiert (siehe _handle_set_game_audio) -
 # audio_player.play() spielt sie plattformabhaengig ab (Windows: MCI, kann alle
 # vier; Linux: je nach verfuegbarem Kommandozeilenplayer, siehe audio_player.py).
 ALLOWED_AUDIO_EXTENSIONS = {".mp3", ".wav", ".ogg", ".flac", ".m4a"}
+# Analog fuer den Video-Modus (siehe set_video()) - von video_player.py per
+# mpv/vlc/ffplay vollflaechig abgespielt.
+ALLOWED_VIDEO_EXTENSIONS = {".mp4", ".mkv", ".webm", ".avi", ".mov"}
+# Dateiname (ohne Endung) des globalen Boot-Sounds/-Videos in AUDIO_DIR/
+# VIDEO_DIR (siehe set_boot_sound()/set_video()) - fuehrender Unterstrich,
+# damit er nie mit einer Spiel-UID (siehe games.db, immer eine UUID)
+# kollidieren kann.
+BOOT_SOUND_BASENAME = "_boot_sound"
+VIDEO_BASENAME = "_boot_video"
+# Anzeigetexte je Sound-Modus (siehe _handle_set_audio_mode()/_api_set_audio_mode()).
+AUDIO_MODE_LABELS = {
+    audio_config.MODE_SONGS: "Einzelne Songs je Spiel",
+    audio_config.MODE_BOOT_SOUND: "Ein Boot-Sound fuer alle Spiele",
+    audio_config.MODE_VIDEO: "Ein Video (Vollbild) fuer alle Spiele",
+}
 
 with open(GUI_DIR / "index.html", encoding="utf-8") as _f:
     PAGE_TEMPLATE = _f.read()
@@ -76,7 +94,8 @@ def fetch_games():
         game_scanner.ensure_db(conn)
         conn.row_factory = sqlite3.Row
         return conn.execute(
-            "SELECT uid, name, installed, color, audio_path FROM games ORDER BY name COLLATE NOCASE"
+            "SELECT uid, name, installed, color, audio_path, audio_enabled "
+            "FROM games ORDER BY name COLLATE NOCASE"
         ).fetchall()
     finally:
         conn.close()
@@ -87,6 +106,25 @@ def set_game_color(uid, color):
     try:
         game_scanner.ensure_db(conn)
         conn.execute("UPDATE games SET color = ? WHERE uid = ?", (color or None, uid))
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def set_game_audio_enabled(uid, enabled):
+    """Schaltet die automatische Wiedergabe eines bereits hochgeladenen
+    Sounds bei Tagstart um (pico_client.py prueft audio_enabled vor jedem
+    audio_player.play(), siehe dort) - ohne die Datei selbst zu entfernen,
+    im Unterschied zu remove_game_audio(). Der manuelle Test-Play-Button
+    (_handle_play_game_audio/_api_play_game_audio) bleibt davon unberuehrt
+    und spielt auch einen deaktivierten Sound weiterhin zum Testen ab."""
+    conn = sqlite3.connect(DB_PATH)
+    try:
+        game_scanner.ensure_db(conn)
+        conn.execute(
+            "UPDATE games SET audio_enabled = ? WHERE uid = ?",
+            (1 if enabled else 0, uid),
+        )
         conn.commit()
     finally:
         conn.close()
@@ -134,8 +172,11 @@ def set_game_audio(uid, filename, content):
     conn = sqlite3.connect(DB_PATH)
     try:
         game_scanner.ensure_db(conn)
+        # audio_enabled bewusst mit zurueckgesetzt: ein frisch hochgeladener
+        # (oder ersetzter) Sound soll sofort wieder automatisch abgespielt
+        # werden, auch wenn der vorherige zuletzt deaktiviert war.
         conn.execute(
-            "UPDATE games SET audio_path = ? WHERE uid = ?",
+            "UPDATE games SET audio_path = ?, audio_enabled = 1 WHERE uid = ?",
             (str(dest.resolve()), uid),
         )
         conn.commit()
@@ -154,6 +195,70 @@ def remove_game_audio(uid):
         conn.commit()
     finally:
         conn.close()
+
+
+def _clear_existing_boot_sound_files():
+    """Analog zu _clear_existing_audio_files(), aber fuer den globalen
+    Boot-Sound (siehe set_boot_sound())."""
+    for old in AUDIO_DIR.glob(f"{BOOT_SOUND_BASENAME}.*"):
+        try:
+            old.unlink()
+        except OSError:
+            pass
+
+
+def set_boot_sound(filename, content):
+    """Wie set_game_audio(), aber fuer den einen globalen Sound, der im
+    Boot-Sound-Modus (siehe audio_config.py) bei jedem erkannten Tag
+    abgespielt wird - unabhaengig vom verknuepften Spiel."""
+    ext = Path(filename or "").suffix.lower()
+    if ext not in ALLOWED_AUDIO_EXTENSIONS:
+        return False, f"Nicht unterstuetztes Audioformat: {ext or '(keine Endung)'}"
+
+    AUDIO_DIR.mkdir(parents=True, exist_ok=True)
+    _clear_existing_boot_sound_files()
+    dest = AUDIO_DIR / f"{BOOT_SOUND_BASENAME}{ext}"
+    dest.write_bytes(content)
+    audio_config.set_boot_sound_path(str(dest.resolve()))
+    return True, None
+
+
+def remove_boot_sound():
+    audio_player.stop()
+    _clear_existing_boot_sound_files()
+    audio_config.set_boot_sound_path(None)
+
+
+def _clear_existing_video_files():
+    """Analog zu _clear_existing_boot_sound_files(), aber fuer das globale
+    Video (siehe set_video())."""
+    for old in VIDEO_DIR.glob(f"{VIDEO_BASENAME}.*"):
+        try:
+            old.unlink()
+        except OSError:
+            pass
+
+
+def set_video(filename, content):
+    """Wie set_boot_sound(), aber fuer das eine globale Video, das im
+    Video-Modus (siehe audio_config.py) bei jedem erkannten Tag statt eines
+    Sounds vollflaechig abgespielt wird (siehe video_player.py)."""
+    ext = Path(filename or "").suffix.lower()
+    if ext not in ALLOWED_VIDEO_EXTENSIONS:
+        return False, f"Nicht unterstuetztes Videoformat: {ext or '(keine Endung)'}"
+
+    VIDEO_DIR.mkdir(parents=True, exist_ok=True)
+    _clear_existing_video_files()
+    dest = VIDEO_DIR / f"{VIDEO_BASENAME}{ext}"
+    dest.write_bytes(content)
+    audio_config.set_video_path(str(dest.resolve()))
+    return True, None
+
+
+def remove_video():
+    video_player.stop()
+    _clear_existing_video_files()
+    audio_config.set_video_path(None)
 
 
 def _parse_multipart(content_type, body):
@@ -212,10 +317,15 @@ def _lookup_game_name(uid):
         conn.close()
 
 
-def _render_game_rows(games):
+def _render_game_rows(games, show_audio=True):
+    """show_audio=False (Boot-Sound-Modus, siehe audio_config.py) blendet
+    die komplette Sound-Spalte aus - die individuellen Spiel-Sounds bleiben
+    dabei in games.db unangetastet, nur ihre Bedienelemente verschwinden
+    vorübergehend, siehe render_page()."""
+    colspan = 6 if show_audio else 5
     if not games:
         return (
-            "<tr><td colspan='6'>Keine Spiele gefunden. "
+            f"<tr><td colspan='{colspan}'>Keine Spiele gefunden. "
             "Erst <code>python3 ../game_scanner.py</code> ausfuehren.</td></tr>"
         )
 
@@ -223,29 +333,56 @@ def _render_game_rows(games):
     for game in games:
         badge = "installiert" if game["installed"] else "nicht installiert"
         color = game["color"] or "#00e5ff"
-        audio_path = game["audio_path"]
 
-        if audio_path:
-            audio_name = _escape(Path(audio_path).name)
-            audio_html = (
-                f"<div class='audio-current'>&#127925; {audio_name}</div>"
-                "<div class='inline-form'>"
-                "<form method='POST' action='/play_game_audio' class='inline-form'>"
+        audio_cell = ""
+        if show_audio:
+            audio_path = game["audio_path"]
+            audio_enabled = bool(game["audio_enabled"])
+
+            if audio_path:
+                audio_name = _escape(Path(audio_path).name)
+                # Umschalt-Button zeigt den aktuellen Zustand an und traegt in
+                # 'enabled' bereits den Zielwert fuer den naechsten Klick (also
+                # das jeweilige Gegenteil) - kein JS noetig, gleiches Muster wie
+                # die uebrigen Formulare auf dieser Seite.
+                toggle_label = "Aktiv" if audio_enabled else "Inaktiv"
+                toggle_class = "" if audio_enabled else " class='secondary'"
+                audio_html = (
+                    f"<div class='audio-current'>&#127925; {audio_name}</div>"
+                    "<div class='inline-form'>"
+                    "<form method='POST' action='/play_game_audio' class='inline-form'>"
+                    f"<input type='hidden' name='uid' value='{game['uid']}'>"
+                    "<button type='submit'>&#9658;</button>"
+                    "</form>"
+                    "<form method='POST' action='/stop_game_audio' class='inline-form'>"
+                    f"<input type='hidden' name='uid' value='{game['uid']}'>"
+                    "<button type='submit' class='secondary'>&#9632;</button>"
+                    "</form>"
+                    "<form method='POST' action='/toggle_game_audio' class='inline-form'>"
+                    f"<input type='hidden' name='uid' value='{game['uid']}'>"
+                    f"<input type='hidden' name='enabled' value='{'0' if audio_enabled else '1'}'>"
+                    f"<button type='submit'{toggle_class} "
+                    "title='Automatische Wiedergabe beim Tag-Start umschalten'>"
+                    f"{toggle_label}</button>"
+                    "</form>"
+                    "<form method='POST' action='/remove_game_audio' class='inline-form'>"
+                    f"<input type='hidden' name='uid' value='{game['uid']}'>"
+                    "<button type='submit' class='secondary'>&#10005;</button>"
+                    "</form>"
+                    "</div>"
+                )
+            else:
+                audio_html = "<span class='unlinked'>kein Sound</span>"
+
+            audio_cell = (
+                "<td class='audio-cell'>"
+                f"{audio_html}"
+                "<form method='POST' action='/set_game_audio' enctype='multipart/form-data' class='inline-form'>"
                 f"<input type='hidden' name='uid' value='{game['uid']}'>"
-                "<button type='submit'>&#9658;</button>"
+                "<input type='file' name='audio_file' accept='.mp3,.wav,.ogg,.flac,.m4a' onchange='this.form.submit()'>"
                 "</form>"
-                "<form method='POST' action='/stop_game_audio' class='inline-form'>"
-                f"<input type='hidden' name='uid' value='{game['uid']}'>"
-                "<button type='submit' class='secondary'>&#9632;</button>"
-                "</form>"
-                "<form method='POST' action='/remove_game_audio' class='inline-form'>"
-                f"<input type='hidden' name='uid' value='{game['uid']}'>"
-                "<button type='submit' class='secondary'>&#10005;</button>"
-                "</form>"
-                "</div>"
+                "</td>"
             )
-        else:
-            audio_html = "<span class='unlinked'>kein Sound</span>"
 
         rows.append(
             "<tr>"
@@ -258,13 +395,7 @@ def _render_game_rows(games):
             f"<input type='color' name='color' value='{color}' onchange='this.form.submit()'>"
             "</form>"
             "</td>"
-            "<td class='audio-cell'>"
-            f"{audio_html}"
-            "<form method='POST' action='/set_game_audio' enctype='multipart/form-data' class='inline-form'>"
-            f"<input type='hidden' name='uid' value='{game['uid']}'>"
-            "<input type='file' name='audio_file' accept='.mp3,.wav,.ogg,.flac,.m4a' onchange='this.form.submit()'>"
-            "</form>"
-            "</td>"
+            f"{audio_cell}"
             "<td>"
             "<form method='POST' action='/send' class='inline-form'>"
             f"<input type='hidden' name='uid' value='{game['uid']}'>"
@@ -330,8 +461,90 @@ def _render_tag_rows(tags, games):
     return "".join(rows)
 
 
+def _render_global_media_section(current_path, icon, empty_label, play_action, stop_action, remove_action, upload_action, upload_field, accept):
+    """Gemeinsamer Aufbau fuer die Boot-Sound- bzw. Video-Sektion im
+    Audio-Modus-Panel (siehe _render_audio_mode_panel()): aktueller
+    Dateiname + Test-Play/Stop/Entfernen-Buttons (falls hinterlegt) sowie
+    das Upload-Feld fuer eine neue Datei - analog zum Sound-Bereich einer
+    Spielzeile in _render_game_rows(), aber ohne 'uid' (gilt global statt
+    pro Spiel) und ohne 'Aktiv/Inaktiv'-Umschalter (im Boot-Sound-/
+    Video-Modus ist der jeweils gewaehlte Modus per Definition immer aktiv)."""
+    if current_path:
+        name = _escape(Path(current_path).name)
+        current_html = (
+            f"<div class='audio-current'>{icon} {name}</div>"
+            "<div class='inline-form'>"
+            f"<form method='POST' action='{play_action}' class='inline-form'>"
+            "<button type='submit'>&#9658;</button>"
+            "</form>"
+            f"<form method='POST' action='{stop_action}' class='inline-form'>"
+            "<button type='submit' class='secondary'>&#9632;</button>"
+            "</form>"
+            f"<form method='POST' action='{remove_action}' class='inline-form'>"
+            "<button type='submit' class='secondary'>&#10005;</button>"
+            "</form>"
+            "</div>"
+        )
+    else:
+        current_html = f"<span class='unlinked'>{empty_label}</span>"
+
+    return (
+        "<div style='margin-top:14px'>"
+        f"{current_html}"
+        f"<form method='POST' action='{upload_action}' enctype='multipart/form-data' "
+        "class='inline-form' style='margin-top:8px'>"
+        f"<input type='file' name='{upload_field}' accept='{accept}' onchange='this.form.submit()'>"
+        "</form>"
+        "</div>"
+    )
+
+
+def _render_audio_mode_panel():
+    """Schalter oben auf der Seite zwischen den drei Sound-/Video-Modi
+    (siehe audio_config.py) sowie - je nach gewaehltem Modus - die
+    Upload-/Test-Bedienelemente fuer den einen globalen Boot-Sound bzw. das
+    eine globale Video."""
+    mode = audio_config.get_mode()
+    songs_checked = " checked" if mode == audio_config.MODE_SONGS else ""
+    boot_checked = " checked" if mode == audio_config.MODE_BOOT_SOUND else ""
+    video_checked = " checked" if mode == audio_config.MODE_VIDEO else ""
+
+    media_section = ""
+    if mode == audio_config.MODE_BOOT_SOUND:
+        media_section = _render_global_media_section(
+            audio_config.get_boot_sound_path(), "&#127925;", "Kein Boot-Sound hinterlegt",
+            "/play_boot_sound", "/stop_boot_sound", "/remove_boot_sound",
+            "/set_boot_sound", "boot_sound_file", ".mp3,.wav,.ogg,.flac,.m4a",
+        )
+    elif mode == audio_config.MODE_VIDEO:
+        media_section = _render_global_media_section(
+            audio_config.get_video_path(), "&#127916;", "Kein Video hinterlegt",
+            "/play_video", "/stop_video", "/remove_video",
+            "/set_video", "video_file", ".mp4,.mkv,.webm,.avi,.mov",
+        )
+
+    return (
+        "<form method='POST' action='/set_audio_mode' class='inline-form' style='gap:22px;flex-wrap:wrap'>"
+        "<label class='inline-form' style='gap:6px'>"
+        f"<input type='radio' name='mode' value='songs'{songs_checked} onchange='this.form.submit()'> "
+        "Einzelne Songs je Spiel"
+        "</label>"
+        "<label class='inline-form' style='gap:6px'>"
+        f"<input type='radio' name='mode' value='boot_sound'{boot_checked} onchange='this.form.submit()'> "
+        "Ein Boot-Sound fuer alle Spiele"
+        "</label>"
+        "<label class='inline-form' style='gap:6px'>"
+        f"<input type='radio' name='mode' value='video'{video_checked} onchange='this.form.submit()'> "
+        "Ein Video (Vollbild) fuer alle Spiele"
+        "</label>"
+        "</form>"
+        f"{media_section}"
+    )
+
+
 def render_page(message_html=""):
     games = fetch_games()
+    show_audio = audio_config.get_mode() == audio_config.MODE_SONGS
 
     config = pico_link.load_config()
     tcp_port = config.get("tcp_port", 5005)
@@ -339,7 +552,9 @@ def render_page(message_html=""):
     tags = pico_link.fetch_tags(pico_ip, tcp_port) if pico_ip else None
 
     page = PAGE_TEMPLATE.replace("__MESSAGE__", message_html)
-    page = page.replace("__ROWS__", _render_game_rows(games))
+    page = page.replace("__AUDIO_MODE_PANEL__", _render_audio_mode_panel())
+    page = page.replace("__SOUND_TH__", "<th>Sound</th>" if show_audio else "")
+    page = page.replace("__ROWS__", _render_game_rows(games, show_audio))
     page = page.replace("__TAG_ROWS__", _render_tag_rows(tags, games))
     return page
 
@@ -364,14 +579,22 @@ def _state_payload():
             "color": g["color"],
             "has_audio": bool(g["audio_path"]),
             "audio_name": Path(g["audio_path"]).name if g["audio_path"] else None,
+            "audio_enabled": bool(g["audio_enabled"]),
         }
         for g in games
     ]
+    boot_sound_path = audio_config.get_boot_sound_path()
+    video_path = audio_config.get_video_path()
     return {
         "ok": True,
         "games": games_json,
         "tags": tags if tags is not None else [],
         "pico_reachable": tags is not None,
+        "audio_mode": audio_config.get_mode(),
+        "has_boot_sound": bool(boot_sound_path),
+        "boot_sound_name": Path(boot_sound_path).name if boot_sound_path else None,
+        "has_video": bool(video_path),
+        "video_name": Path(video_path).name if video_path else None,
     }
 
 
@@ -389,9 +612,29 @@ API_ROUTES = {
     "/api/forget_tag": "_api_forget_tag",
     "/api/set_game_audio": "_api_set_game_audio",
     "/api/remove_game_audio": "_api_remove_game_audio",
+    "/api/toggle_game_audio": "_api_toggle_game_audio",
     "/api/play_game_audio": "_api_play_game_audio",
     "/api/stop_game_audio": "_api_stop_game_audio",
+    "/api/set_audio_mode": "_api_set_audio_mode",
+    "/api/set_boot_sound": "_api_set_boot_sound",
+    "/api/remove_boot_sound": "_api_remove_boot_sound",
+    "/api/play_boot_sound": "_api_play_boot_sound",
+    "/api/stop_boot_sound": "_api_stop_boot_sound",
+    "/api/set_video": "_api_set_video",
+    "/api/remove_video": "_api_remove_video",
+    "/api/play_video": "_api_play_video",
+    "/api/stop_video": "_api_stop_video",
 }
+
+
+class _ReusableTCPServer(socketserver.TCPServer):
+    """socketserver.TCPServer setzt standardmaessig kein SO_REUSEADDR - nach
+    jedem Neustart (z. B. systemctl restart, oder waehrend der Entwicklung)
+    kann der Port dadurch bis zu ~60s im TIME_WAIT haengen bleiben (sobald
+    zwischenzeitlich mindestens eine Client-Verbindung bestand), der naechste
+    Start schlaegt dann mit 'Address already in use' fehl, obwohl kein
+    anderer Prozess den Port tatsaechlich noch haelt."""
+    allow_reuse_address = True
 
 
 class Handler(http.server.BaseHTTPRequestHandler):
@@ -480,8 +723,18 @@ class Handler(http.server.BaseHTTPRequestHandler):
             "/forget_tag": self._handle_forget_tag,
             "/set_game_audio": self._handle_set_game_audio,
             "/remove_game_audio": self._handle_remove_game_audio,
+            "/toggle_game_audio": self._handle_toggle_game_audio,
             "/play_game_audio": self._handle_play_game_audio,
             "/stop_game_audio": self._handle_stop_game_audio,
+            "/set_audio_mode": self._handle_set_audio_mode,
+            "/set_boot_sound": self._handle_set_boot_sound,
+            "/remove_boot_sound": self._handle_remove_boot_sound,
+            "/play_boot_sound": self._handle_play_boot_sound,
+            "/stop_boot_sound": self._handle_stop_boot_sound,
+            "/set_video": self._handle_set_video,
+            "/remove_video": self._handle_remove_video,
+            "/play_video": self._handle_play_video,
+            "/stop_video": self._handle_stop_video,
         }
         handler = routes.get(self.path)
         if handler is None:
@@ -593,6 +846,15 @@ class Handler(http.server.BaseHTTPRequestHandler):
         remove_game_audio(uid)
         return "<div class='message success'>Sound entfernt.</div>"
 
+    def _handle_toggle_game_audio(self, form):
+        uid = form.get("uid", [""])[0]
+        if not uid:
+            return "<div class='message error'>Keine Spiel-UID angegeben.</div>"
+        enabled = form.get("enabled", ["1"])[0] == "1"
+        set_game_audio_enabled(uid, enabled)
+        zustand = "aktiviert" if enabled else "deaktiviert"
+        return f"<div class='message success'>Automatische Wiedergabe {zustand}.</div>"
+
     def _handle_play_game_audio(self, form):
         uid = form.get("uid", [""])[0]
         path = _lookup_game_audio_path(uid)
@@ -603,6 +865,64 @@ class Handler(http.server.BaseHTTPRequestHandler):
 
     def _handle_stop_game_audio(self, form):
         audio_player.stop()
+        return "<div class='message success'>Wiedergabe gestoppt.</div>"
+
+    def _handle_set_audio_mode(self, form):
+        mode = form.get("mode", [""])[0]
+        if mode not in audio_config.VALID_MODES:
+            return "<div class='message error'>Ungueltiger Sound-Modus.</div>"
+        audio_config.set_mode(mode)
+        label = AUDIO_MODE_LABELS[mode]
+        return f"<div class='message success'>Sound-Modus umgestellt: {label}.</div>"
+
+    def _handle_set_boot_sound(self, form):
+        upload = form.get("boot_sound_file", [None])[0]
+        if not upload or not isinstance(upload, dict) or not upload.get("filename"):
+            return "<div class='message error'>Keine Datei ausgewaehlt.</div>"
+
+        ok, error = set_boot_sound(upload["filename"], upload["content"])
+        if ok:
+            return f"<div class='message success'>Boot-Sound '{_escape(upload['filename'])}' gespeichert.</div>"
+        return f"<div class='message error'>{_escape(error)}</div>"
+
+    def _handle_remove_boot_sound(self, form):
+        remove_boot_sound()
+        return "<div class='message success'>Boot-Sound entfernt.</div>"
+
+    def _handle_play_boot_sound(self, form):
+        path = audio_config.get_boot_sound_path()
+        if not path:
+            return "<div class='message error'>Kein Boot-Sound hinterlegt.</div>"
+        audio_player.play(path)
+        return "<div class='message success'>Wiedergabe gestartet.</div>"
+
+    def _handle_stop_boot_sound(self, form):
+        audio_player.stop()
+        return "<div class='message success'>Wiedergabe gestoppt.</div>"
+
+    def _handle_set_video(self, form):
+        upload = form.get("video_file", [None])[0]
+        if not upload or not isinstance(upload, dict) or not upload.get("filename"):
+            return "<div class='message error'>Keine Datei ausgewaehlt.</div>"
+
+        ok, error = set_video(upload["filename"], upload["content"])
+        if ok:
+            return f"<div class='message success'>Video '{_escape(upload['filename'])}' gespeichert.</div>"
+        return f"<div class='message error'>{_escape(error)}</div>"
+
+    def _handle_remove_video(self, form):
+        remove_video()
+        return "<div class='message success'>Video entfernt.</div>"
+
+    def _handle_play_video(self, form):
+        path = audio_config.get_video_path()
+        if not path:
+            return "<div class='message error'>Kein Video hinterlegt.</div>"
+        video_player.play(path)
+        return "<div class='message success'>Wiedergabe gestartet.</div>"
+
+    def _handle_stop_video(self, form):
+        video_player.stop()
         return "<div class='message success'>Wiedergabe gestoppt.</div>"
 
     def _link(self, uid, game_uid, aktion, name=None):
@@ -718,6 +1038,15 @@ class Handler(http.server.BaseHTTPRequestHandler):
         remove_game_audio(uid)
         return {"ok": True, "message": "Sound entfernt."}
 
+    def _api_toggle_game_audio(self, data):
+        uid = data.get("uid", "")
+        if not uid:
+            return {"ok": False, "message": "Keine Spiel-UID angegeben."}
+        enabled = bool(data.get("enabled"))
+        set_game_audio_enabled(uid, enabled)
+        zustand = "aktiviert" if enabled else "deaktiviert"
+        return {"ok": True, "message": f"Automatische Wiedergabe {zustand}."}
+
     def _api_play_game_audio(self, data):
         uid = data.get("uid", "")
         path = _lookup_game_audio_path(uid)
@@ -728,6 +1057,64 @@ class Handler(http.server.BaseHTTPRequestHandler):
 
     def _api_stop_game_audio(self, data):
         audio_player.stop()
+        return {"ok": True, "message": "Wiedergabe gestoppt."}
+
+    def _api_set_audio_mode(self, data):
+        mode = data.get("mode", "")
+        if mode not in audio_config.VALID_MODES:
+            return {"ok": False, "message": "Ungueltiger Sound-Modus."}
+        audio_config.set_mode(mode)
+        label = AUDIO_MODE_LABELS[mode]
+        return {"ok": True, "message": f"Sound-Modus umgestellt: {label}."}
+
+    def _api_set_boot_sound(self, data):
+        upload = data.get("boot_sound_file")
+        if not upload or not isinstance(upload, dict) or not upload.get("filename"):
+            return {"ok": False, "message": "Keine Datei ausgewaehlt."}
+
+        ok, error = set_boot_sound(upload["filename"], upload["content"])
+        if ok:
+            return {"ok": True, "message": f"Boot-Sound '{upload['filename']}' gespeichert."}
+        return {"ok": False, "message": error}
+
+    def _api_remove_boot_sound(self, data):
+        remove_boot_sound()
+        return {"ok": True, "message": "Boot-Sound entfernt."}
+
+    def _api_play_boot_sound(self, data):
+        path = audio_config.get_boot_sound_path()
+        if not path:
+            return {"ok": False, "message": "Kein Boot-Sound hinterlegt."}
+        audio_player.play(path)
+        return {"ok": True, "message": "Wiedergabe gestartet."}
+
+    def _api_stop_boot_sound(self, data):
+        audio_player.stop()
+        return {"ok": True, "message": "Wiedergabe gestoppt."}
+
+    def _api_set_video(self, data):
+        upload = data.get("video_file")
+        if not upload or not isinstance(upload, dict) or not upload.get("filename"):
+            return {"ok": False, "message": "Keine Datei ausgewaehlt."}
+
+        ok, error = set_video(upload["filename"], upload["content"])
+        if ok:
+            return {"ok": True, "message": f"Video '{upload['filename']}' gespeichert."}
+        return {"ok": False, "message": error}
+
+    def _api_remove_video(self, data):
+        remove_video()
+        return {"ok": True, "message": "Video entfernt."}
+
+    def _api_play_video(self, data):
+        path = audio_config.get_video_path()
+        if not path:
+            return {"ok": False, "message": "Kein Video hinterlegt."}
+        video_player.play(path)
+        return {"ok": True, "message": "Wiedergabe gestartet."}
+
+    def _api_stop_video(self, data):
+        video_player.stop()
         return {"ok": True, "message": "Wiedergabe gestoppt."}
 
     def _respond(self, html):
@@ -758,12 +1145,13 @@ def main():
     # sind also unveraendert nur lokal erreichbar.
     config = pico_link.load_config()
     host = config.get("gui_bind") or HOST
-    with socketserver.TCPServer((host, PORT), Handler) as httpd:
+    port = config.get("gui_port") or DEFAULT_PORT
+    with _ReusableTCPServer((host, port), Handler) as httpd:
         display_host = "127.0.0.1" if host == "0.0.0.0" else host
-        url = f"http://{display_host}:{PORT}/"
+        url = f"http://{display_host}:{port}/"
         print(f"GUI laeuft unter {url}")
         if host == "0.0.0.0":
-            print(f"Im LAN erreichbar unter Port {PORT} (Token-geschuetzt, siehe config.json)")
+            print(f"Im LAN erreichbar unter Port {port} (Token-geschuetzt, siehe config.json)")
         try:
             webbrowser.open(url)
         except Exception:

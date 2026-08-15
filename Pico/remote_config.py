@@ -1,11 +1,15 @@
 """Persistente Verbindungseinstellungen fuer die Steuer-Seite (control.html):
 IP/Port der SteamOS-Seite (steamOs/gui/gui_server.py) sowie das gemeinsame
 Token, das dort in config.json unter "remote_control_token" hinterlegt ist.
+Zusaetzlich die MAC-Adresse des PCs (pc_mac), die ausschliesslich vom Pico
+selbst genutzt wird, um ihn per Wake-on-LAN aufzuwecken (siehe wol.py/
+ping_server._maybe_send_wol) - anders als pc_ip/pc_port/token spielt sie fuer
+das JavaScript von control.html keine Rolle.
 
 Vom Nutzer einmalig ueber das Formular auf /control gespeichert (siehe
-status_server.py) - danach eingebettet in jede Auslieferung von control.html,
-damit dessen JavaScript direkt (ohne Umweg ueber den Pico) mit
-gui_server.py sprechen kann.
+status_server.py) - pc_ip/pc_port/token danach eingebettet in jede
+Auslieferung von control.html, damit dessen JavaScript direkt (ohne Umweg
+ueber den Pico) mit gui_server.py sprechen kann.
 
 Gleiches Lazy-Load/Speichern-Muster wie tag_store.py, hier aber fuer ein
 einzelnes kleines dict statt einer Tag-Liste - kein separates Locking noetig,
@@ -16,8 +20,8 @@ import ujson as json
 
 DATEI = "remote_config.json"
 
-_config = None  # {"pc_ip": str, "pc_port": int, "token": str}
-_STANDARD = {"pc_ip": "", "pc_port": 8080, "token": ""}
+_config = None  # {"pc_ip": str, "pc_port": int, "token": str, "pc_mac": str}
+_STANDARD = {"pc_ip": "", "pc_port": 8090, "token": "", "pc_mac": ""}
 
 
 def _laden():
@@ -38,13 +42,14 @@ def get():
     return dict(_config)
 
 
-def save(pc_ip, pc_port, token):
+def save(pc_ip, pc_port, token, pc_mac=""):
     global _config
     _laden()
     _config = {
         "pc_ip": (pc_ip or "").strip(),
         "pc_port": int(pc_port) if str(pc_port).strip() else _STANDARD["pc_port"],
         "token": (token or "").strip(),
+        "pc_mac": (pc_mac or "").strip(),
     }
     try:
         with open(DATEI, "w") as f:

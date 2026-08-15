@@ -63,6 +63,7 @@ h2{
   box-shadow:0 0 0 1px rgba(0,229,255,.04),0 8px 24px rgba(0,0,0,.35);
   overflow:hidden;
 }
+.card{padding:16px 20px}
 table{width:100%;border-collapse:collapse;font-size:.92rem}
 th,td{padding:11px 14px;text-align:left;vertical-align:middle}
 th{
@@ -123,10 +124,14 @@ input[type=file]{
 <div class="wrap">
 <h1>Spiel an Pico senden</h1>
 __MESSAGE__
+<div class="panel card" style="margin-bottom:24px">
+<h2 style="margin-top:0">Sound-Modus</h2>
+__AUDIO_MODE_PANEL__
+</div>
 <div class="panel">
 <table>
 <thead>
-<tr><th>Name</th><th>Status</th><th>UID</th><th>Farbe</th><th>Sound</th><th></th></tr>
+<tr><th>Name</th><th>Status</th><th>UID</th><th>Farbe</th>__SOUND_TH__<th></th></tr>
 </thead>
 <tbody>
 __ROWS__
@@ -161,8 +166,17 @@ hat Vorrang vor der Farbe des verknuepften Spiels und wird an einen optionalen z
 (Led_Pico) weitergereicht, der damit einen LED-Streifen ansteuert.</p>
 <p class="hint">Sound: Ueber das Dateifeld eine MP3/WAV/OGG/FLAC/M4A-Datei je Spiel hochladen - sie wird
 lokal abgelegt und ab dann immer von dort geladen. &#9658; spielt sie hier zum Test ab, &#9632; stoppt
-die Wiedergabe, &#10005; entfernt die Verknuepfung wieder. Liegt ein Tag auf, das mit diesem Spiel
-verknuepft ist, spielt derselbe Sound automatisch parallel zum Spielstart.</p>
+die Wiedergabe, &#10005; entfernt die Verknuepfung wieder. "Aktiv"/"Inaktiv" schaltet nur die
+automatische Wiedergabe beim Tag-Start um, ohne die Datei zu entfernen - &#9658; spielt auch einen
+deaktivierten Sound weiterhin zum Testen ab. Liegt ein Tag auf, das mit diesem Spiel verknuepft
+ist und dessen Sound aktiv ist, spielt derselbe Sound automatisch parallel zum Spielstart.</p>
+<p class="hint">Sound-Modus (oben): "Einzelne Songs je Spiel" ist die oben beschriebene
+Standard-Variante mit individuellem Sound pro Spiel. "Ein Boot-Sound fuer alle Spiele" und
+"Ein Video (Vollbild) fuer alle Spiele" blenden die Sound-Spalte aus und spielen stattdessen bei
+jedem erkannten Tag denselben, hier hochgeladenen Sound bzw. dasselbe Video vollflaechig ab -
+unabhaengig vom verknuepften Spiel, aehnlich einem Konsolen-Start-Sound/-Video (Video braucht einen
+installierten Player: mpv, vlc oder ffplay). Die individuellen Spiel-Sounds bleiben beim Umschalten
+erhalten und stehen nach Zurueckwechseln auf "Einzelne Songs je Spiel" wieder wie zuvor bereit.</p>
 </div>
 </body>
 </html>

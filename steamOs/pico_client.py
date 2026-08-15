@@ -39,10 +39,12 @@ import sys
 import time
 from pathlib import Path
 
+import audio_config
 import audio_player
 import game_scanner
 import led_link
 import pico_link
+import video_player
 
 GAMES_DB_PATH = Path(__file__).resolve().parent / "games.db"
 
@@ -299,10 +301,26 @@ def handle_tag(pico_ip, tcp_port, timestamp):
         return
 
     print(f"[{timestamp}] Tag erkannt: {game['name']} ({tag_uid})", flush=True)
-    # Sound und Spielstart laufen bewusst nebeneinander her: audio_player.play()
-    # ist selbst nicht blockierend (Windows: MCI async, Linux: eigener
-    # Player-Prozess), haelt launch_game() also nicht auf.
-    audio_player.play(game["audio_path"])
+    # Sound/Video und Spielstart laufen bewusst nebeneinander her:
+    # audio_player.play()/video_player.play() sind selbst nicht blockierend
+    # (Windows: MCI async, Linux: eigener Player-Prozess), halten
+    # launch_game() also nicht auf. Was (falls ueberhaupt etwas) laeuft,
+    # haengt vom globalen Modus ab (siehe audio_config.py, per
+    # GUI/Steuer-Seite umschaltbar): im Boot-Sound-/Video-Modus immer
+    # derselbe Sound/dasselbe Video fuer jedes Spiel, sonst wie bisher der
+    # individuelle Spiel-Sound (nur falls audio_enabled) - der manuelle
+    # Test-Play-Button in der GUI bleibt davon unabhaengig.
+    mode = audio_config.get_mode()
+    if mode == audio_config.MODE_BOOT_SOUND:
+        boot_sound_path = audio_config.get_boot_sound_path()
+        if boot_sound_path:
+            audio_player.play(boot_sound_path)
+    elif mode == audio_config.MODE_VIDEO:
+        video_path = audio_config.get_video_path()
+        if video_path:
+            video_player.play(video_path)
+    elif game["audio_enabled"]:
+        audio_player.play(game["audio_path"])
     proc = launch_game(game)
     if proc is None:
         return
@@ -333,6 +351,7 @@ def check_game_still_active(current):
     print(f"Tag fuer '{game['name']}' nicht mehr aufliegend oder gewechselt - beende Spiel.", flush=True)
     stop_game(game, _running_game["proc"])
     audio_player.stop()
+    video_player.stop()
     _running_game = None
 
 

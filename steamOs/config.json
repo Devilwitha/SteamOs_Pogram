@@ -4,5 +4,6 @@
   "udp_port": 5006,
   "interval_seconds": 3,
   "gui_bind": "0.0.0.0",
+  "gui_port": 8090,
   "remote_control_token": "E6Ze6aFqhTNbnXQhJJf7gW0sA6xQb9tL"
 }
