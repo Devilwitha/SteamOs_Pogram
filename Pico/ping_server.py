@@ -52,9 +52,16 @@ HTTP (Port 80): "/" liefert die Statusseite (dark/modern), "/status.json"
 den aktuellen Status inkl. Tag-Liste als JSON, "/control" die Steuer-Seite
 (Spiele/Tags/Sounds bedienen wie in der SteamOS-GUI, siehe control.html)
 und "/control/settings" (POST) speichert deren Verbindungseinstellungen
-(PC-Adresse/Token, siehe remote_config.py). Die Steuer-Seite selbst spricht
-danach direkt mit steamOs/gui/gui_server.py auf dem PC - der Pico leitet
-dabei keine Daten durch, siehe control.html.
+(PC-Adresse/Token/MAC, siehe remote_config.py). Die Steuer-Seite selbst
+spricht danach direkt mit steamOs/gui/gui_server.py auf dem PC - der Pico
+leitet dabei keine Daten durch, siehe control.html.
+
+Wake-on-LAN: liegt ein mit einem Spiel verknuepfter Tag laenger unbeantwortet
+auf (SteamOS also offenbar nicht erreichbar, z. B. weil der PC schlaeft),
+weckt _maybe_send_wol() den PC per Magic Packet - siehe wol.py sowie das
+Feld "pc_mac" in remote_config.py (per /control einzurichten). Ist danach
+gestartet der PC wieder erreichbar, laeuft der Spielstart ganz normal ueber
+steamOs/pico_client.py wie gewohnt.
 
 Sind die beiden optionalen Status-LEDs angeschlossen (siehe main.py/README:
 rot/gruen), zeigen sie unabhaengig vom LCD immer den aktuellen Tag-Zustand:
@@ -84,6 +91,8 @@ import ujson as json
 import tag_manager
 import status_server
 import net_state
+import remote_config
+import wol
 
 TCP_PORT = 5005
 HTTP_PORT = 80
@@ -104,6 +113,15 @@ MAX_HTTP_BODY = 4096
 # auftretender WLAN-Ausfall unbemerkt bleiben und der Pico unerreichbar
 # haengen bleiben.
 WLAN_CHECK_INTERVAL_MS = 30_000
+
+# Siehe _maybe_send_wol(): wie lange ein verknuepfter Tag unbeantwortet
+# (Status "erkannt", siehe tag_manager._status_locked) aufliegen muss, bevor
+# das erste Magic Packet gesendet wird - deutlich laenger als ein normaler
+# Poll-Zyklus von steamOs/pico_client.py (Standard alle 3s), damit ein
+# wacher PC nicht faelschlich als schlafend behandelt wird. Danach wird in
+# WOL_RESEND_MS-Abstaenden erneut gesendet, bis SteamOS antwortet.
+WOL_GRACE_MS = 6_000
+WOL_RESEND_MS = 15_000
 
 
 def _handle_command(command):
@@ -324,6 +342,52 @@ def _serve(my_ip, hostname):
                 _handle_http_client(cl, my_ip, hostname)
 
 
+# Zustand fuer _maybe_send_wol(): fuer welche Spiel-UID gerade auf eine
+# Reaktion von SteamOS gewartet wird, seit wann, und wann zuletzt ein
+# Magic Packet dafuer gesendet wurde.
+_wol_game_uid = None
+_wol_first_seen_ms = 0
+_wol_last_sent_ms = 0
+
+
+def _maybe_send_wol(current, now):
+    """Weckt den PC per Wake-on-LAN, wenn ein mit einem Spiel verknuepfter
+    Tag aufliegt, SteamOS aber seit WOL_GRACE_MS nicht einmal per TAG?
+    danach gefragt hat (Status bleibt auf "erkannt", siehe
+    tag_manager._status_locked()) - typischerweise, weil pico_client.py
+    wegen Schlafmodus des PCs nicht laeuft. Antwortet SteamOS
+    zwischenzeitlich (Status wechselt auf "gesendet"/"gestartet"), wird der
+    Wartezustand zurueckgesetzt. Ohne hinterlegte PC-MAC (siehe
+    remote_config.py, per /control einzurichten) ein No-Op."""
+    global _wol_game_uid, _wol_first_seen_ms, _wol_last_sent_ms
+
+    game_uid = current.get("game_uid") if current else None
+    status = current.get("status") if current else None
+
+    if not game_uid or status != "erkannt":
+        _wol_game_uid = None
+        return
+
+    if game_uid != _wol_game_uid:
+        _wol_game_uid = game_uid
+        _wol_first_seen_ms = now
+        _wol_last_sent_ms = 0
+        return
+
+    if time.ticks_diff(now, _wol_first_seen_ms) < WOL_GRACE_MS:
+        return
+    if _wol_last_sent_ms and time.ticks_diff(now, _wol_last_sent_ms) < WOL_RESEND_MS:
+        return
+
+    mac = remote_config.get().get("pc_mac")
+    if not mac:
+        return
+
+    if wol.send(mac):
+        print("WOL: Magic Packet gesendet an", mac, "(Spiel-UID", game_uid, ")")
+        _wol_last_sent_ms = now
+
+
 def _update_status_leds(current, led_rot, led_gruen):
     """Zwei einfache Status-LEDs (siehe README): gruen leuchtet nur, wenn
     ein Tag aufliegt UND SteamOS den Spielstart bereits per
@@ -371,6 +435,7 @@ def _background_loop(my_ip, lcd=None, led_rot=None, led_gruen=None):
 
             current = tag_manager.get_current()
             _update_status_leds(current, led_rot, led_gruen)
+            _maybe_send_wol(current, now)
 
             if lcd is not None:
                 state = (

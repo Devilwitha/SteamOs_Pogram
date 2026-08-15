@@ -66,10 +66,12 @@ def render_control_page():
     pc_ip = cfg["pc_ip"] or (net_state.get_last_pc_ip() or "")
     pc_port = str(cfg["pc_port"])
     token = cfg["token"]
+    pc_mac = cfg["pc_mac"]
 
     page = CONTROL_PAGE.replace("__PC_IP__", _escape_attr(pc_ip))
     page = page.replace("__PC_PORT__", _escape_attr(pc_port))
     page = page.replace("__TOKEN__", _escape_attr(token))
+    page = page.replace("__PC_MAC__", _escape_attr(pc_mac))
     page = page.replace("__PC_IP_JS__", _escape_js(pc_ip))
     page = page.replace("__PC_PORT_JS__", _escape_js(pc_port))
     page = page.replace("__TOKEN_JS__", _escape_js(token))
@@ -134,7 +136,12 @@ def handle(cl, request_line, my_ip, hostname, body=b""):
         # (siehe README.md, Abschnitt "Problembehandlung") - bewusst
         # argumentlos, kein decode(errors="replace").
         form = _parse_form(body.decode())
-        remote_config.save(form.get("pc_ip", ""), form.get("pc_port", "8080"), form.get("token", ""))
+        remote_config.save(
+            form.get("pc_ip", ""),
+            form.get("pc_port", "8090"),
+            form.get("token", ""),
+            form.get("pc_mac", ""),
+        )
         _send_response(cl, "HTTP/1.1 303 See Other", [("Location", "/control?saved=1"), ("Content-Length", "0")], b"")
         return
 

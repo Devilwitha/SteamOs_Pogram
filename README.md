@@ -20,7 +20,9 @@ LED-Streifen, der das erkannte Spiel/den Tag farblich anzeigt.
   moderne Statuswebseite und steuert einen RC522-RFID-Leser: liest laufend
   aufliegende Tags, speichert jeden neu erkannten Tag und verknuepft ihn -
   in beide Richtungen - mit einer Spiel-UID sowie optional einer eigenen
-  Farbe.
+  Farbe. Antwortet SteamOS laenger nicht (z. B. weil der PC schlaeft), weckt
+  der Pico ihn optional per Wake-on-LAN (siehe
+  [Wake-on-LAN](Pico/README.md#wake-on-lan-pc-aus-dem-schlaf-wecken)).
 - **[Led_Pico/](Led_Pico)** - MicroPython-Programm fuer einen **zweiten,
   eigenstaendigen** Raspberry Pi Pico W mit WS2812/NeoPixel-LED-Streifen.
   Optional: laeuft unabhaengig vom RFID-Pico und zeigt per LED-Streifen
@@ -60,6 +62,11 @@ LED-Streifen, der das erkannte Spiel/den Tag farblich anzeigt.
    direkt vom Pico aus - siehe [Fernsteuerung ueber die Pico-Webseite](#fernsteuerung-ueber-die-pico-webseite-optional)
    unten. Setzt voraus, dass `gui_bind`/`remote_control_token` in
    `steamOs/config.json` gesetzt sind (siehe [steamOs/README.md](steamOs/README.md)).
+9. **(Optional) Wake-on-LAN:** PC-MAC im `/control`-Formular des Pico
+   eintragen, damit er den PC bei aufliegendem, aber unbeantwortetem Tag
+   automatisch weckt - siehe
+   [Wake-on-LAN](Pico/README.md#wake-on-lan-pc-aus-dem-schlaf-wecken)
+   im Pico-README fuer die dafuer noetige BIOS-/OS-seitige Einrichtung.
 
 ## Protokoll zwischen SteamOS und Pico
 

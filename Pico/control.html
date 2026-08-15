@@ -146,12 +146,17 @@ input[type=file]{font:inherit;font-size:.76rem;color:var(--dim);max-width:160px}
 <div class="field"><label>PC-IP</label><input type="text" name="pc_ip" id="pc_ip" value="__PC_IP__" placeholder="z.B. 192.168.178.50"></div>
 <div class="field"><label>Port</label><input type="number" name="pc_port" id="pc_port" value="__PC_PORT__" style="min-width:80px"></div>
 <div class="field"><label>Token</label><input type="password" name="token" id="token" value="__TOKEN__" placeholder="siehe config.json"></div>
+<div class="field"><label>PC-MAC (fuer Aufwecken)</label><input type="text" name="pc_mac" id="pc_mac" value="__PC_MAC__" placeholder="AA:BB:CC:DD:EE:FF"></div>
 <button type="submit">Speichern</button>
 </div>
 </form>
 <p class="hint">Muss einmalig eingerichtet werden: IP und Port von steamOs/gui/gui_server.py auf dem PC
-(Standardport 8080), sowie das dort in config.json unter "remote_control_token" hinterlegte Token.
+(Standardport 8090), sowie das dort in config.json unter "remote_control_token" hinterlegte Token.
 Ohne passendes Token lehnt der PC alle Anfragen von hier ab.</p>
+<p class="hint">PC-MAC (optional): MAC-Adresse der Netzwerkkarte des PCs (kabelgebunden empfohlen).
+Ist sie hinterlegt, weckt der Pico den PC per Wake-on-LAN, sobald ein verknuepfter Tag
+aufliegt, aber SteamOS laenger nicht antwortet (z. B. weil der PC schlaeft) - dafuer
+muss Wake-on-LAN im BIOS/UEFI sowie am Netzwerkadapter des PCs aktiviert sein.</p>
 </div>
 
 <div id="control-sections" style="display:none">

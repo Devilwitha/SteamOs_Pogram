@@ -174,17 +174,51 @@ Vor der ersten Nutzung einmalig einrichten (Formular oben auf `/control`):
   (siehe `net_state.py` - reine Nebenwirkung des sowieso alle paar
   Sekunden eintreffenden `PING`, kein eigener Mechanismus noetig). Laeuft
   `pico_client.py` noch nicht oder ist die IP falsch, von Hand eintragen.
-- **PC-Port**: Standard `8080` (Port von `gui_server.py`).
+- **PC-Port**: Standard `8090` (Port von `gui_server.py`).
 - **Token**: muss exakt mit `remote_control_token` in `steamOs/config.json`
   uebereinstimmen - siehe dort, ohne passendes Token weist der PC alle
   Anfragen mit `401` zurueck.
+- **PC-MAC** (optional): siehe [Wake-on-LAN](#wake-on-lan-pc-aus-dem-schlaf-wecken)
+  unten.
 
-Diese drei Werte werden in `remote_config.json` auf dem Pico gespeichert
+Diese Werte werden in `remote_config.json` auf dem Pico gespeichert
 (`remote_config.py`, Formular-POST auf `/control/settings`) und bei jedem
 Aufruf von `/control` wieder in die Seite eingesetzt - sowohl escaped fuers
 HTML-Formular als auch (separat escaped) fuers eingebettete JavaScript, da
 sich das Token bewusst frei waehlen laesst und dabei theoretisch
-Sonderzeichen wie `"` oder `&` enthalten kann.
+Sonderzeichen wie `"` oder `&` enthalten kann. Die PC-MAC wird nur
+serverseitig vom Pico selbst genutzt (siehe unten) und nicht ins JavaScript
+eingebettet.
+
+## Wake-on-LAN (PC aus dem Schlaf wecken)
+
+Liegt ein mit einem Spiel verknuepfter Tag auf, antwortet SteamOS aber laenger
+nicht (der Meldezustand bleibt auf "erkannt", d. h. nicht einmal `TAG?` kam
+an - siehe `ping_server._maybe_send_wol()`), sendet der Pico automatisch ein
+Wake-on-LAN "Magic Packet" per UDP-Broadcast (`wol.py`). Ist der PC danach
+wach, uebernimmt `steamOs/pico_client.py` den Spielstart ganz normal wie
+gewohnt - am Ablauf selbst aendert sich nichts, es kommt nur die
+Aufweck-Verzoegerung hinzu.
+
+Voraussetzungen auf PC-Seite (jeweils einmalig einzurichten, nicht Teil
+dieses Repos):
+
+- **PC-MAC** im `/control`-Formular hinterlegen (MAC-Adresse der
+  Netzwerkkarte, z. B. `AA:BB:CC:DD:EE:FF`) - unter Linux z. B. per
+  `ip link show` oder `nmcli device show <interface>` zu ermitteln. Leer
+  gelassen bleibt Wake-on-LAN komplett deaktiviert.
+- **Kabelgebundenes Netzwerk empfohlen**: WLAN-Adapter unterstuetzen
+  Wake-on-WLAN im Ruhezustand meist nicht zuverlaessig.
+- **Wake-on-LAN im BIOS/UEFI aktivieren.**
+- **Wake-on-LAN am Netzwerkadapter des Betriebssystems aktivieren**, z. B.
+  unter Linux mit `ethtool -s <interface> wol g` (dauerhaft je nach
+  Distribution per NetworkManager-Profil: `nmcli connection modify
+  <verbindung> 802-3-ethernet.wake-on-lan magic`) oder in den
+  Windows-Adaptereinstellungen unter "Energieoptionen" ->
+  "Wake on Magic Packet".
+- Der PC muss dafuer in einen Zustand versetzt worden sein, in dem die
+  Netzwerkkarte weiterhin Standby-Strom erhaelt (z. B. Suspend-to-RAM/S3) -
+  bei vollstaendig ausgeschaltetem PC haengt das von Mainboard/BIOS ab.
 
 ## Hardware / Verkabelung
 
