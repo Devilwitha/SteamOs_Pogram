@@ -249,8 +249,11 @@ Takt zusaetzlich Folgendes:
 4. Unabhaengig davon wird bei jedem Takt zusaetzlich per `CURRENT?` der
    aktuell aufliegende Tag abgefragt (nicht einmalig wie `TAG?`, siehe
    oben) und die daraus ermittelte Farbe (Tag-Farbe, sonst Spiel-Farbe,
-   sonst aus) an einen optionalen [Led_Pico](../Led_Pico) weitergereicht -
-   nur wenn sie sich seit dem letzten Takt geaendert hat.
+   sonst Weiss im Leerlauf - siehe `pico_client.IDLE_LED_COLOR`) an einen
+   optionalen [Led_Pico](../Led_Pico) sowie optionale lokale USB-RGB-LEDs
+   per OpenRGB (siehe [Corsair/OpenRGB-LEDs](#corsair-openrgb-usb-rgb-leds))
+   weitergereicht - jeweils nur wenn sie sich seit dem letzten Takt
+   geaendert hat.
 
 ### Automatisches Beenden bei entferntem/gewechseltem Tag
 
@@ -302,6 +305,50 @@ automatische Suche per UDP-Broadcast, sonst fest eintragen. Ist kein
 Led_Pico im Netzwerk konfiguriert/erreichbar, wird das beim Farb-Update
 stillschweigend uebersprungen - er ist rein optional, der RFID-Pico/
 Spielstart funktioniert unabhaengig davon.
+
+<a id="corsair-openrgb-usb-rgb-leds"></a>
+## OpenRGB (lokale USB-RGB-LEDs, `openrgb_config.json`)
+
+```json
+{
+  "enabled": true,
+  "host": "127.0.0.1",
+  "port": 6742,
+  "target_names": ["Corsair"]
+}
+```
+
+Ein viertes, ebenfalls optionales "Geraet": lokal per USB angeschlossene
+RGB-LEDs (z. B. ein Corsair-LED-Streifen), angesteuert ueber
+[OpenRGB](https://openrgb.org) statt eines eigenen Pico. Zeigt dieselbe
+Farbe wie der Led_Pico (siehe oben), aber lokal am PC. Setzt voraus:
+
+1. OpenRGB installiert (auf SteamOS/Bazzite z. B. per
+   `flatpak install flathub org.openrgb.OpenRGB`) und als Dienst aktiv
+   (`steamos-openrgb.service`, wird von `install.sh` nur eingerichtet,
+   wenn OpenRGB tatsaechlich installiert ist - sonst wuerde der Dienst mit
+   `Restart=always` endlos gegen eine fehlende Flatpak-App fehlschlagen).
+2. Die offizielle Python-Bibliothek installiert:
+   `pip install --user openrgb-python` (anders als der Rest von `steamOs/`
+   bewusst nicht auf die Standardbibliothek beschraenkt - das binaere
+   OpenRGB-SDK-Protokoll ist zu komplex fuer eine eigene, robuste
+   Nachimplementierung).
+
+Ein PC meldet OpenRGB typischerweise mehrere RGB-faehige Geraete
+(Grafikkarte, Mainboard, Maus, ...), von denen aber nur die zu
+`target_names` passenden (Gross-/Kleinschreibung egal, Teilstring reicht)
+die Spiel-/Leerlauf-Farbe bekommen - Standard `["Corsair"]`. **Alle
+uebrigen Geraete werden einmalig beim Start von `pico_client.py` komplett
+ausgeschaltet** (siehe `openrgb_link.turn_off_others()`), damit sie nicht
+mit eigenen Werkseffekten (Rainbow etc.) weiterlaufen und stoeren. Bei
+mehreren/anderen Ziel-Geraeten `target_names` anpassen - Namen wie in
+`flatpak run org.openrgb.OpenRGB --list-devices` angezeigt.
+`enabled: false` deaktiviert die gesamte Integration (weder Farb-Sync
+noch Ausschalten der uebrigen Geraete), ohne `openrgb_link.py` selbst
+aendern zu muessen. Ist OpenRGB nicht installiert/erreichbar oder die
+Bibliothek fehlt, wird das beim Farb-Update stillschweigend uebersprungen
+(siehe `openrgb_link.py`) - rein optional, der RFID-Pico/Spielstart
+funktioniert unabhaengig davon.
 
 ## LilyGo-Statusdisplay (`lilygo_config.json`)
 

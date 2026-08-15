@@ -139,6 +139,50 @@ input[type=file]{font:inherit;font-size:.76rem;color:var(--dim);max-width:160px}
 <h1>Pico &middot; Fernsteuerung</h1>
 <div id="message-area"></div>
 
+<div id="control-sections" style="display:none">
+<h2>Sound-Modus</h2>
+<div class="panel card">
+<form id="audio-mode-form" class="inline-form" style="gap:22px;flex-wrap:wrap">
+<label class="inline-form" style="gap:6px"><input type="radio" name="mode" value="songs"> Einzelne Songs je Spiel</label>
+<label class="inline-form" style="gap:6px"><input type="radio" name="mode" value="boot_sound"> Ein Boot-Sound fuer alle Spiele</label>
+<label class="inline-form" style="gap:6px"><input type="radio" name="mode" value="video"> Ein Video (Vollbild) fuer alle Spiele</label>
+</form>
+<div id="media-section"></div>
+</div>
+
+<h2>LED-Einstellungen</h2>
+<div class="panel card">
+<div class="inline-form" style="gap:22px;flex-wrap:wrap">
+<button type="button" id="led-toggle-btn">LEDs aktiviert</button>
+<label class="inline-form" style="gap:6px">Farbe ohne aufliegenden Tag ("Konsole an"):
+<input type="color" id="idle-color-input">
+</label>
+</div>
+</div>
+
+<h2>Bekannte RFID-Tags</h2>
+<div class="inline" style="margin-bottom:12px">
+<button type="button" class="secondary" id="forget-tag-btn">Tag loeschen...</button>
+</div>
+<div class="panel">
+<table>
+<thead><tr><th>Tag-UID</th><th>Verknuepftes Spiel</th><th>Farbe</th><th colspan="2"></th></tr></thead>
+<tbody id="tags-body"><tr><td colspan="5" class="empty">Lade...</td></tr></tbody>
+</table>
+</div>
+
+<h2>Spiele</h2>
+<div class="panel">
+<table>
+<thead><tr><th>Name</th><th>Status</th><th>UID</th><th>Farbe</th><th id="sound-th">Sound</th><th></th></tr></thead>
+<tbody id="games-body"><tr><td colspan="6" class="empty">Lade...</td></tr></tbody>
+</table>
+</div>
+<p class="hint">Diese Seite spricht direkt (per Browser-fetch) mit gui_server.py auf dem PC - der Pico
+selbst leitet dabei keine Daten durch und speichert auch keine eigene Kopie der Spieledaten.
+Aenderungen landen sofort in games.db auf dem PC, genau wie ueber die dortige GUI.</p>
+</div>
+
 <div class="panel card">
 <h2 style="margin-top:0">Verbindung zum PC</h2>
 <form id="settings-form" method="POST" action="/control/settings">
@@ -159,39 +203,6 @@ aufliegt, aber SteamOS laenger nicht antwortet (z. B. weil der PC schlaeft) - da
 muss Wake-on-LAN im BIOS/UEFI sowie am Netzwerkadapter des PCs aktiviert sein.</p>
 </div>
 
-<div id="control-sections" style="display:none">
-<h2>Sound-Modus</h2>
-<div class="panel card">
-<form id="audio-mode-form" class="inline-form" style="gap:22px;flex-wrap:wrap">
-<label class="inline-form" style="gap:6px"><input type="radio" name="mode" value="songs"> Einzelne Songs je Spiel</label>
-<label class="inline-form" style="gap:6px"><input type="radio" name="mode" value="boot_sound"> Ein Boot-Sound fuer alle Spiele</label>
-<label class="inline-form" style="gap:6px"><input type="radio" name="mode" value="video"> Ein Video (Vollbild) fuer alle Spiele</label>
-</form>
-<div id="media-section"></div>
-</div>
-
-<h2>Spiele</h2>
-<div class="panel">
-<table>
-<thead><tr><th>Name</th><th>Status</th><th>UID</th><th>Farbe</th><th id="sound-th">Sound</th><th></th></tr></thead>
-<tbody id="games-body"><tr><td colspan="6" class="empty">Lade...</td></tr></tbody>
-</table>
-</div>
-
-<h2>Bekannte RFID-Tags</h2>
-<div class="inline" style="margin-bottom:12px">
-<button type="button" class="secondary" id="forget-tag-btn">Tag loeschen...</button>
-</div>
-<div class="panel">
-<table>
-<thead><tr><th>Tag-UID</th><th>Verknuepftes Spiel</th><th>Farbe</th><th colspan="2"></th></tr></thead>
-<tbody id="tags-body"><tr><td colspan="5" class="empty">Lade...</td></tr></tbody>
-</table>
-</div>
-<p class="hint">Diese Seite spricht direkt (per Browser-fetch) mit gui_server.py auf dem PC - der Pico
-selbst leitet dabei keine Daten durch und speichert auch keine eigene Kopie der Spieledaten.
-Aenderungen landen sofort in games.db auf dem PC, genau wie ueber die dortige GUI.</p>
-</div>
 <a class="nav-btn" href="/">&#8592; Zur Statusseite</a>
 </div>
 
@@ -311,6 +322,15 @@ function renderAudioMode(state) {
   }
 }
 
+function renderLedSettings(state) {
+  const enabled = !!state.led_enabled;
+  const btn = document.getElementById("led-toggle-btn");
+  btn.textContent = enabled ? "LEDs aktiviert" : "LEDs deaktiviert";
+  btn.className = enabled ? "" : "secondary";
+  btn.dataset.enabled = enabled ? "1" : "0";
+  document.getElementById("idle-color-input").value = state.idle_led_color || "#ffffff";
+}
+
 function renderTags(tags, picoReachable, games) {
   const body = document.getElementById("tags-body");
   if (!picoReachable) {
@@ -353,6 +373,7 @@ async function loadState() {
     return;
   }
   renderAudioMode(result);
+  renderLedSettings(result);
   const showAudio = (result.audio_mode || "songs") === "songs";
   renderGames(result.games || [], showAudio);
   renderTags(result.tags || [], result.pico_reachable, result.games || []);
@@ -362,6 +383,16 @@ document.getElementById("audio-mode-form").addEventListener("change", ev => {
   if (ev.target.name === "mode") {
     afterAction(apiPostJson("/api/set_audio_mode", { mode: ev.target.value }));
   }
+});
+
+document.getElementById("led-toggle-btn").addEventListener("click", () => {
+  const btn = document.getElementById("led-toggle-btn");
+  const newEnabled = btn.dataset.enabled !== "1";
+  afterAction(apiPostJson("/api/set_led_enabled", { enabled: newEnabled }));
+});
+
+document.getElementById("idle-color-input").addEventListener("change", ev => {
+  afterAction(apiPostJson("/api/set_idle_led_color", { color: ev.target.value }));
 });
 
 document.getElementById("media-section").addEventListener("click", ev => {

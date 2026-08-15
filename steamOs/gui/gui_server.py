@@ -44,6 +44,7 @@ sys.path.insert(0, str(STEAMOS_DIR))
 import audio_config  # noqa: E402
 import audio_player  # noqa: E402
 import game_scanner  # noqa: E402
+import led_settings  # noqa: E402
 import pico_link  # noqa: E402
 import video_player  # noqa: E402
 
@@ -542,6 +543,37 @@ def _render_audio_mode_panel():
     )
 
 
+def _render_led_settings_panel():
+    """Eigener Abschnitt fuer die allgemeinen LED-Einstellungen (siehe
+    led_settings.py): Hauptschalter fuer die gesamte LED-Synchronisation
+    (Led_Pico + lokale USB-RGB-Geraete ueber OpenRGB, siehe
+    pico_client.update_led()) sowie die Leerlauf-Farbe ("Konsole an" -
+    angezeigt, wenn kein Tag aufliegt bzw. weder Tag noch Spiel eine eigene
+    Farbe haben). Gleiches Umschalt-Button-Muster wie beim
+    Sound-Aktiv/Inaktiv-Umschalter in _render_game_rows()."""
+    settings = led_settings.load_config()
+    enabled = bool(settings.get("enabled", True))
+    idle_color = settings.get("idle_color") or "#ffffff"
+
+    toggle_label = "LEDs aktiviert" if enabled else "LEDs deaktiviert"
+    toggle_class = "" if enabled else " class='secondary'"
+
+    return (
+        "<div class='inline-form' style='gap:22px;flex-wrap:wrap'>"
+        "<form method='POST' action='/set_led_enabled' class='inline-form'>"
+        f"<input type='hidden' name='enabled' value='{'0' if enabled else '1'}'>"
+        f"<button type='submit'{toggle_class} "
+        "title='Schaltet Led_Pico und lokale USB-RGB-LEDs gemeinsam ein/aus'>"
+        f"{toggle_label}</button>"
+        "</form>"
+        "<form method='POST' action='/set_idle_led_color' class='inline-form'>"
+        "Farbe ohne aufliegenden Tag (&quot;Konsole an&quot;):"
+        f"<input type='color' name='color' value='{idle_color}' onchange='this.form.submit()'>"
+        "</form>"
+        "</div>"
+    )
+
+
 def render_page(message_html=""):
     games = fetch_games()
     show_audio = audio_config.get_mode() == audio_config.MODE_SONGS
@@ -553,6 +585,7 @@ def render_page(message_html=""):
 
     page = PAGE_TEMPLATE.replace("__MESSAGE__", message_html)
     page = page.replace("__AUDIO_MODE_PANEL__", _render_audio_mode_panel())
+    page = page.replace("__LED_SETTINGS_PANEL__", _render_led_settings_panel())
     page = page.replace("__SOUND_TH__", "<th>Sound</th>" if show_audio else "")
     page = page.replace("__ROWS__", _render_game_rows(games, show_audio))
     page = page.replace("__TAG_ROWS__", _render_tag_rows(tags, games))
@@ -595,6 +628,8 @@ def _state_payload():
         "boot_sound_name": Path(boot_sound_path).name if boot_sound_path else None,
         "has_video": bool(video_path),
         "video_name": Path(video_path).name if video_path else None,
+        "led_enabled": led_settings.is_enabled(),
+        "idle_led_color": led_settings.get_idle_color(),
     }
 
 
@@ -624,6 +659,8 @@ API_ROUTES = {
     "/api/remove_video": "_api_remove_video",
     "/api/play_video": "_api_play_video",
     "/api/stop_video": "_api_stop_video",
+    "/api/set_led_enabled": "_api_set_led_enabled",
+    "/api/set_idle_led_color": "_api_set_idle_led_color",
 }
 
 
@@ -735,6 +772,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
             "/remove_video": self._handle_remove_video,
             "/play_video": self._handle_play_video,
             "/stop_video": self._handle_stop_video,
+            "/set_led_enabled": self._handle_set_led_enabled,
+            "/set_idle_led_color": self._handle_set_idle_led_color,
         }
         handler = routes.get(self.path)
         if handler is None:
@@ -924,6 +963,17 @@ class Handler(http.server.BaseHTTPRequestHandler):
     def _handle_stop_video(self, form):
         video_player.stop()
         return "<div class='message success'>Wiedergabe gestoppt.</div>"
+
+    def _handle_set_led_enabled(self, form):
+        enabled = form.get("enabled", ["1"])[0] == "1"
+        led_settings.set_enabled(enabled)
+        zustand = "aktiviert" if enabled else "deaktiviert"
+        return f"<div class='message success'>LEDs {zustand}.</div>"
+
+    def _handle_set_idle_led_color(self, form):
+        color = form.get("color", ["#ffffff"])[0]
+        led_settings.set_idle_color(color)
+        return "<div class='message success'>Leerlauf-Farbe gespeichert.</div>"
 
     def _link(self, uid, game_uid, aktion, name=None):
         config = pico_link.load_config()
@@ -1116,6 +1166,17 @@ class Handler(http.server.BaseHTTPRequestHandler):
     def _api_stop_video(self, data):
         video_player.stop()
         return {"ok": True, "message": "Wiedergabe gestoppt."}
+
+    def _api_set_led_enabled(self, data):
+        enabled = bool(data.get("enabled"))
+        led_settings.set_enabled(enabled)
+        zustand = "aktiviert" if enabled else "deaktiviert"
+        return {"ok": True, "message": f"LEDs {zustand}."}
+
+    def _api_set_idle_led_color(self, data):
+        color = data.get("color", "#ffffff")
+        led_settings.set_idle_color(color)
+        return {"ok": True, "message": "Leerlauf-Farbe gespeichert."}
 
     def _respond(self, html):
         encoded = html.encode("utf-8")

@@ -24,9 +24,15 @@ das sich auch die GUI (gui/gui_server.py) teilt.
 
 Zusaetzlich wird bei jedem Durchlauf per update_led() die Farbe des
 gerade aufliegenden Tags (bzw. des damit verknuepften Spiels) ermittelt
-und an einen optionalen zweiten Pico weitergereicht (siehe ../Led_Pico),
-der damit einen LED-Streifen ansteuert - unabhaengig vom Spielstart,
-komplett eigenstaendiges Geraet (led_config.json/led_link.py).
+und weitergereicht an: einen optionalen zweiten Pico (siehe ../Led_Pico),
+der damit einen LED-Streifen ansteuert (led_config.json/led_link.py), und
+optional lokal per USB angeschlossene RGB-Geraete ueber OpenRGB - Standard
+sind Corsair-Geraete (siehe openrgb_config.json/openrgb_link.py,
+target_names) - beide unabhaengig vom Spielstart und voneinander,
+komplett eigenstaendig. Alle uebrigen von OpenRGB gemeldeten Geraete
+(Grafikkarte, Mainboard, Maus, ...) werden einmalig beim Start komplett
+ausgeschaltet (siehe main()/openrgb_link.turn_off_others()), statt mit
+eigenen Werkseffekten weiterzulaufen.
 """
 import csv
 import os
@@ -43,6 +49,8 @@ import audio_config
 import audio_player
 import game_scanner
 import led_link
+import led_settings
+import openrgb_link
 import pico_link
 import video_player
 
@@ -355,33 +363,60 @@ def check_game_still_active(current):
     _running_game = None
 
 
+# Sentinel fuer update_led()/_last_led_color, wenn die LED-Synchronisation
+# per led_settings.is_enabled() abgeschaltet ist - kann nie mit einer
+# echten Farbe (immer "#......") kollidieren.
+_LED_DISABLED = "disabled"
+
+
 def resolve_led_color(current):
-    """Ermittelt die fuer den Led_Pico anzuzeigende Farbe aus dem
+    """Ermittelt die fuer Led_Pico/Corsair-LEDs anzuzeigende Farbe aus dem
     aktuellen Tag-Status (siehe pico_link.fetch_current): eine direkt am
     Tag gesetzte Farbe hat Vorrang vor der Farbe des verknuepften Spiels.
-    Gibt None zurueck, wenn kein Tag aufliegt bzw. weder Tag noch Spiel
-    eine Farbe haben (Streifen soll dann aus sein)."""
-    if not current:
-        return None
-    if current.get("color"):
-        return current["color"]
-    game_uid = current.get("game_uid")
-    if game_uid:
-        game = find_game_by_uid(game_uid)
-        if game is not None:
-            return game["color"]
-    return None
+    Liegt kein Tag auf bzw. haben weder Tag noch Spiel eine eigene Farbe,
+    wird die in led_settings.json konfigurierte Leerlauf-Farbe (Standard
+    Weiss, siehe led_settings.py) zurueckgegeben."""
+    if current:
+        if current.get("color"):
+            return current["color"]
+        game_uid = current.get("game_uid")
+        if game_uid:
+            game = find_game_by_uid(game_uid)
+            if game is not None and game["color"]:
+                return game["color"]
+    return led_settings.get_idle_color()
 
 
 def update_led(current):
-    """Haelt den Led_Pico auf dem Laufenden: ermittelt aus dem (von main()
-    bereits per CURRENT? abgefragten) aktuellen Tag-Status die passende
-    Farbe und schickt sie weiter - aber nur, wenn sie sich seit dem
-    letzten Durchlauf geaendert hat, um nicht bei jedem Takt unnoetig
-    Netzwerkverkehr zum Led_Pico zu erzeugen. Ist kein Led_Pico im Netzwerk
-    konfiguriert/erreichbar, wird das stillschweigend uebersprungen - er
-    ist optional."""
+    """Haelt sowohl den optionalen Led_Pico als auch optionale lokale
+    USB-RGB-Geraete ueber OpenRGB an (siehe openrgb_link.py - standardmaessig
+    Corsair-Geraete, siehe openrgb_config.json/target_names; alle uebrigen
+    OpenRGB-Geraete werden separat einmalig beim Start ausgeschaltet, siehe
+    main()): ermittelt aus dem (von main() bereits per CURRENT? abgefragten)
+    aktuellen Tag-Status die passende Farbe (siehe resolve_led_color(), im
+    Leerlauf die konfigurierte Leerlauf-Farbe statt aus) und schickt sie an
+    beide weiter - aber nur, wenn sie sich seit dem letzten Durchlauf
+    geaendert hat, um nicht bei jedem Takt unnoetig Netzwerk-/USB-Verkehr
+    zu erzeugen. Ist die LED-Synchronisation per led_settings.json
+    (Hauptschalter, siehe led_settings.py) deaktiviert, werden beide
+    stattdessen einmalig ausgeschaltet und dann in Ruhe gelassen, bis
+    wieder aktiviert. Led_Pico und OpenRGB-Geraete sind unabhaengig
+    voneinander optional: ist eins nicht konfiguriert/erreichbar, wird nur
+    dieses eine stillschweigend uebersprungen, ohne das andere zu
+    beeintraechtigen. Solange keins von beiden erreichbar war, wird beim
+    naechsten Durchlauf erneut versucht (kein dauerhaftes Aufgeben, falls
+    z. B. der Led_Pico oder der OpenRGB-Server erst spaeter online geht)."""
     global _last_led_color, _led_pico_ip
+
+    if not led_settings.is_enabled():
+        if _last_led_color != _LED_DISABLED:
+            led_config = led_link.load_config()
+            led_ip = led_config.get("led_pico_ip") or _led_pico_ip or led_link.discover_led_pico(led_config.get("udp_port", 5008))
+            if led_ip:
+                led_link.turn_off(led_ip, led_config.get("tcp_port", 5007))
+            openrgb_link.turn_off()
+            _last_led_color = _LED_DISABLED
+        return
 
     color = resolve_led_color(current)
     if color == _last_led_color:
@@ -391,17 +426,20 @@ def update_led(current):
     led_tcp_port = led_config.get("tcp_port", 5007)
     led_udp_port = led_config.get("udp_port", 5008)
     led_ip = led_config.get("led_pico_ip") or _led_pico_ip or led_link.discover_led_pico(led_udp_port)
-    if not led_ip:
-        return
+    led_ok = False
+    if led_ip:
+        led_ok = led_link.set_color(led_ip, led_tcp_port, color)
+        if led_ok:
+            _led_pico_ip = led_ip
+        else:
+            # IP war offenbar nicht (mehr) erreichbar - naechstes Mal neu
+            # ermitteln statt dauerhaft gegen eine tote IP zu senden.
+            _led_pico_ip = None
 
-    ok = led_link.set_color(led_ip, led_tcp_port, color) if color else led_link.turn_off(led_ip, led_tcp_port)
-    if ok:
-        _led_pico_ip = led_ip
+    openrgb_ok = openrgb_link.set_color(color)
+
+    if led_ok or openrgb_ok:
         _last_led_color = color
-    else:
-        # IP war offenbar nicht (mehr) erreichbar - naechstes Mal neu
-        # ermitteln statt dauerhaft gegen eine tote IP zu senden.
-        _led_pico_ip = None
 
 
 def main():
@@ -416,6 +454,11 @@ def main():
     pico_ip = configured_ip
 
     print("SteamOS <-> Pico Monitor gestartet", flush=True)
+    # Einmalig beim Start: alle OpenRGB-Geraete ausser den target_names
+    # (Standard: Corsair, siehe openrgb_config.json) komplett ausschalten,
+    # statt mit ihren eigenen Werkseffekten (Rainbow etc.) weiterzulaufen -
+    # rein optional, ohne laufenden OpenRGB-Server ein stiller No-Op.
+    openrgb_link.turn_off_others()
 
     while True:
         if not pico_ip:
