@@ -1,1 +1,1 @@
-{"enabled": true, "idle_color": "#ffffff"}
+{"enabled": true, "idle_color": "#ffffff", "blink_on_sleep": true}

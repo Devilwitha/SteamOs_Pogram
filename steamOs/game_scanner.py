@@ -6,7 +6,15 @@ Jedes Spiel bekommt eine stabile UID (deterministisch aus der Steam-AppID
 abgeleitet, damit wiederholte Scans keine Duplikate erzeugen). Der Name
 wird immer gespeichert; Installationspfad und Start-Kommando nur, wenn das
 Spiel tatsaechlich installiert ist.
+
+Neue Spiele ohne Farbe (siehe README: 'color' wird nie ueberschrieben,
+sobald einmal gesetzt) bekommen automatisch eine zugewiesen (siehe
+_assign_auto_colors()): bevorzugt aus Steams eigenem lokalem Bildcache
+(appcache/librarycache/<appid>/) per PIL, sonst eine kraeftige Zufallsfarbe
+statt alle unbenannt gleich (z. B. blau) zu lassen.
 """
+import colorsys
+import random
 import sqlite3
 import sys
 import time
@@ -14,6 +22,11 @@ import uuid
 from pathlib import Path
 
 import vdf_parser
+
+try:
+    from PIL import Image
+except ImportError:
+    Image = None
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 DB_PATH = SCRIPT_DIR / "games.db"
@@ -103,6 +116,81 @@ def make_uid(appid):
     return str(uuid.uuid5(UID_NAMESPACE, str(appid)))
 
 
+# Dateinamen im Steam-Bildcache (appcache/librarycache/<appid>/), die als
+# Vorlage fuer die automatische Farbermittlung in Frage kommen - in dieser
+# Reihenfolge probiert: das vertikale Bibliotheks-Cover ist am ehesten
+# reprasentativ und ueberall vorhanden, der Store-Header als Rueckfall.
+# Danach wird noch jede sonstige Bilddatei im Ordner probiert (Steam legt
+# manche Cache-Dateien ohne Endung an, aber mit gueltigem Bildinhalt -
+# z. B. der kleine quadratische Icon-Hash).
+_LIBRARY_IMAGE_NAMES = ("library_600x900.jpg", "header.jpg")
+
+
+def _find_library_image(steam_root, appid):
+    """Sucht das beste verfuegbare Cover-/Icon-Bild eines Spiels in Steams
+    eigenem lokalem Bildcache. Gibt None zurueck, wenn nichts gefunden
+    wurde (z. B. Spiel noch nie in der Steam-Bibliothek geoeffnet)."""
+    cache_dir = steam_root / "appcache" / "librarycache" / str(appid)
+    if not cache_dir.is_dir():
+        return None
+    for name in _LIBRARY_IMAGE_NAMES:
+        candidate = cache_dir / name
+        if candidate.is_file():
+            return candidate
+    for candidate in sorted(cache_dir.iterdir()):
+        if candidate.is_file():
+            return candidate
+    return None
+
+
+def _dominant_color_from_image(path):
+    """Ermittelt eine reprasentative Farbe aus einem Bild per PIL: auf eine
+    kleine Palette reduziert (Median-Cut-Quantisierung), davon die
+    haeufigste Farbe genommen - liefert deutlich lebendigere/passendere
+    Ergebnisse als ein reiner Pixel-Mittelwert (der bei Coverbildern oft in
+    einem blassen Grau/Braun landet). Gibt None zurueck, wenn die Datei
+    nicht als Bild gelesen werden kann bzw. PIL nicht installiert ist."""
+    if Image is None or path is None:
+        return None
+    try:
+        with Image.open(path) as img:
+            img = img.convert("RGB")
+            img.thumbnail((100, 100))
+            quantized = img.quantize(colors=8, method=Image.MEDIANCUT)
+            palette = quantized.getpalette()
+            counts = quantized.getcolors()
+            if not counts:
+                return None
+            _count, index = max(counts, key=lambda c: c[0])
+            r, g, b = palette[index * 3:index * 3 + 3]
+            return f"#{r:02x}{g:02x}{b:02x}"
+    except Exception:
+        return None
+
+
+def _random_color():
+    """Kraeftige Zufallsfarbe (feste hohe Saettigung/Helligkeit im
+    HSV-Raum, nur der Farbton ist zufaellig) statt gleichfoermigem
+    RGB-Zufall, der oft blass/grau wirkt - Rueckfall fuer Spiele ohne
+    brauchbares Cover-Bild (kein PIL, Bild fehlt/nicht lesbar)."""
+    r, g, b = colorsys.hsv_to_rgb(random.random(), 0.65, 0.95)
+    return f"#{int(r * 255):02x}{int(g * 255):02x}{int(b * 255):02x}"
+
+
+def _assign_auto_colors(conn, steam_root):
+    """Weist jedem Spiel ohne Farbe (color IS NULL) automatisch eine zu -
+    nach Moeglichkeit aus dessen Steam-Cover, sonst eine Zufallsfarbe.
+    Laeuft nach jedem upsert_game()-Durchlauf; ruehrt Spiele mit bereits
+    gesetzter Farbe (manuell in der GUI oder von einem frueheren Lauf
+    dieser Funktion vergeben) nicht an, siehe ensure_db()-Docstring zu
+    'color'."""
+    rows = conn.execute("SELECT uid, appid FROM games WHERE color IS NULL").fetchall()
+    for uid, appid in rows:
+        image_path = _find_library_image(steam_root, appid) if steam_root else None
+        color = _dominant_color_from_image(image_path) or _random_color()
+        conn.execute("UPDATE games SET color = ? WHERE uid = ?", (color, uid))
+
+
 def ensure_db(conn):
     conn.execute("""
         CREATE TABLE IF NOT EXISTS games (
@@ -173,11 +261,32 @@ def scan_and_store():
         ensure_db(conn)
         for game in all_games.values():
             upsert_game(conn, game)
+        _assign_auto_colors(conn, steam_root)
         conn.commit()
     finally:
         conn.close()
 
     return len(all_games)
+
+
+def reset_all_colors():
+    """Setzt die Farbe ALLER Spiele zurueck auf die automatisch aus dem
+    Cover ermittelte (bzw. eine neue Zufallsfarbe, falls kein Cover
+    gefunden wird) - im Unterschied zu _assign_auto_colors() (nur Spiele
+    ohne Farbe) ueberschreibt das auch bereits manuell in der GUI
+    zugewiesene Farben. Fuer den "Farben zuruecksetzen"-Button in der GUI
+    (siehe gui_server.py). Gibt die Anzahl betroffener Spiele zurueck."""
+    steam_root = find_steam_root()
+    conn = sqlite3.connect(DB_PATH)
+    try:
+        ensure_db(conn)
+        conn.execute("UPDATE games SET color = NULL")
+        count = conn.execute("SELECT COUNT(*) FROM games").fetchone()[0]
+        _assign_auto_colors(conn, steam_root)
+        conn.commit()
+    finally:
+        conn.close()
+    return count
 
 
 def main():

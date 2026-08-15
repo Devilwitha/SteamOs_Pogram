@@ -547,16 +547,21 @@ def _render_led_settings_panel():
     """Eigener Abschnitt fuer die allgemeinen LED-Einstellungen (siehe
     led_settings.py): Hauptschalter fuer die gesamte LED-Synchronisation
     (Led_Pico + lokale USB-RGB-Geraete ueber OpenRGB, siehe
-    pico_client.update_led()) sowie die Leerlauf-Farbe ("Konsole an" -
+    pico_client.update_led()), die Leerlauf-Farbe ("Konsole an" -
     angezeigt, wenn kein Tag aufliegt bzw. weder Tag noch Spiel eine eigene
-    Farbe haben). Gleiches Umschalt-Button-Muster wie beim
-    Sound-Aktiv/Inaktiv-Umschalter in _render_game_rows()."""
+    Farbe haben) sowie der Schalter fuer das Sleep/Shutdown-Blinken (siehe
+    pico_client._start_sleep_shutdown_listener()). Gleiches
+    Umschalt-Button-Muster wie beim Sound-Aktiv/Inaktiv-Umschalter in
+    _render_game_rows()."""
     settings = led_settings.load_config()
     enabled = bool(settings.get("enabled", True))
     idle_color = settings.get("idle_color") or "#ffffff"
+    blink_on_sleep = bool(settings.get("blink_on_sleep", True))
 
     toggle_label = "LEDs aktiviert" if enabled else "LEDs deaktiviert"
     toggle_class = "" if enabled else " class='secondary'"
+    blink_label = "Blinken bei Sleep/Shutdown: An" if blink_on_sleep else "Blinken bei Sleep/Shutdown: Aus"
+    blink_class = "" if blink_on_sleep else " class='secondary'"
 
     return (
         "<div class='inline-form' style='gap:22px;flex-wrap:wrap'>"
@@ -569,6 +574,12 @@ def _render_led_settings_panel():
         "<form method='POST' action='/set_idle_led_color' class='inline-form'>"
         "Farbe ohne aufliegenden Tag (&quot;Konsole an&quot;):"
         f"<input type='color' name='color' value='{idle_color}' onchange='this.form.submit()'>"
+        "</form>"
+        "<form method='POST' action='/set_blink_on_sleep' class='inline-form'>"
+        f"<input type='hidden' name='enabled' value='{'0' if blink_on_sleep else '1'}'>"
+        f"<button type='submit'{blink_class} "
+        "title='LEDs kurz blinken lassen, sobald der PC in den Standby geht oder herunterfaehrt'>"
+        f"{blink_label}</button>"
         "</form>"
         "</div>"
     )
@@ -630,6 +641,7 @@ def _state_payload():
         "video_name": Path(video_path).name if video_path else None,
         "led_enabled": led_settings.is_enabled(),
         "idle_led_color": led_settings.get_idle_color(),
+        "blink_on_sleep": led_settings.is_blink_on_sleep_enabled(),
     }
 
 
@@ -661,6 +673,8 @@ API_ROUTES = {
     "/api/stop_video": "_api_stop_video",
     "/api/set_led_enabled": "_api_set_led_enabled",
     "/api/set_idle_led_color": "_api_set_idle_led_color",
+    "/api/set_blink_on_sleep": "_api_set_blink_on_sleep",
+    "/api/reset_all_colors": "_api_reset_all_colors",
 }
 
 
@@ -774,6 +788,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
             "/stop_video": self._handle_stop_video,
             "/set_led_enabled": self._handle_set_led_enabled,
             "/set_idle_led_color": self._handle_set_idle_led_color,
+            "/set_blink_on_sleep": self._handle_set_blink_on_sleep,
+            "/reset_all_colors": self._handle_reset_all_colors,
         }
         handler = routes.get(self.path)
         if handler is None:
@@ -974,6 +990,16 @@ class Handler(http.server.BaseHTTPRequestHandler):
         color = form.get("color", ["#ffffff"])[0]
         led_settings.set_idle_color(color)
         return "<div class='message success'>Leerlauf-Farbe gespeichert.</div>"
+
+    def _handle_set_blink_on_sleep(self, form):
+        enabled = form.get("enabled", ["1"])[0] == "1"
+        led_settings.set_blink_on_sleep_enabled(enabled)
+        zustand = "aktiviert" if enabled else "deaktiviert"
+        return f"<div class='message success'>Blinken bei Sleep/Shutdown {zustand}.</div>"
+
+    def _handle_reset_all_colors(self, form):
+        count = game_scanner.reset_all_colors()
+        return f"<div class='message success'>Farben von {count} Spiel(en) auf ihre Cover-Durchschnittsfarbe zurueckgesetzt.</div>"
 
     def _link(self, uid, game_uid, aktion, name=None):
         config = pico_link.load_config()
@@ -1177,6 +1203,16 @@ class Handler(http.server.BaseHTTPRequestHandler):
         color = data.get("color", "#ffffff")
         led_settings.set_idle_color(color)
         return {"ok": True, "message": "Leerlauf-Farbe gespeichert."}
+
+    def _api_set_blink_on_sleep(self, data):
+        enabled = bool(data.get("enabled"))
+        led_settings.set_blink_on_sleep_enabled(enabled)
+        zustand = "aktiviert" if enabled else "deaktiviert"
+        return {"ok": True, "message": f"Blinken bei Sleep/Shutdown {zustand}."}
+
+    def _api_reset_all_colors(self, data):
+        count = game_scanner.reset_all_colors()
+        return {"ok": True, "message": f"Farben von {count} Spiel(en) auf ihre Cover-Durchschnittsfarbe zurueckgesetzt."}
 
     def _respond(self, html):
         encoded = html.encode("utf-8")

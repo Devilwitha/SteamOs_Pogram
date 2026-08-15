@@ -157,6 +157,7 @@ input[type=file]{font:inherit;font-size:.76rem;color:var(--dim);max-width:160px}
 <label class="inline-form" style="gap:6px">Farbe ohne aufliegenden Tag ("Konsole an"):
 <input type="color" id="idle-color-input">
 </label>
+<button type="button" id="blink-toggle-btn">Blinken bei Sleep/Shutdown: An</button>
 </div>
 </div>
 
@@ -172,6 +173,9 @@ input[type=file]{font:inherit;font-size:.76rem;color:var(--dim);max-width:160px}
 </div>
 
 <h2>Spiele</h2>
+<div class="inline" style="margin-bottom:12px">
+<button type="button" class="secondary" id="reset-colors-btn">Farben zuruecksetzen...</button>
+</div>
 <div class="panel">
 <table>
 <thead><tr><th>Name</th><th>Status</th><th>UID</th><th>Farbe</th><th id="sound-th">Sound</th><th></th></tr></thead>
@@ -329,6 +333,12 @@ function renderLedSettings(state) {
   btn.className = enabled ? "" : "secondary";
   btn.dataset.enabled = enabled ? "1" : "0";
   document.getElementById("idle-color-input").value = state.idle_led_color || "#ffffff";
+
+  const blinkEnabled = !!state.blink_on_sleep;
+  const blinkBtn = document.getElementById("blink-toggle-btn");
+  blinkBtn.textContent = blinkEnabled ? "Blinken bei Sleep/Shutdown: An" : "Blinken bei Sleep/Shutdown: Aus";
+  blinkBtn.className = blinkEnabled ? "" : "secondary";
+  blinkBtn.dataset.enabled = blinkEnabled ? "1" : "0";
 }
 
 function renderTags(tags, picoReachable, games) {
@@ -393,6 +403,12 @@ document.getElementById("led-toggle-btn").addEventListener("click", () => {
 
 document.getElementById("idle-color-input").addEventListener("change", ev => {
   afterAction(apiPostJson("/api/set_idle_led_color", { color: ev.target.value }));
+});
+
+document.getElementById("blink-toggle-btn").addEventListener("click", () => {
+  const btn = document.getElementById("blink-toggle-btn");
+  const newEnabled = btn.dataset.enabled !== "1";
+  afterAction(apiPostJson("/api/set_blink_on_sleep", { enabled: newEnabled }));
 });
 
 document.getElementById("media-section").addEventListener("click", ev => {
@@ -462,6 +478,11 @@ document.getElementById("tags-body").addEventListener("click", ev => {
 
 document.getElementById("forget-tag-btn").addEventListener("click", () => {
   afterAction(apiPostJson("/api/forget_tag", {}));
+});
+
+document.getElementById("reset-colors-btn").addEventListener("click", () => {
+  if (!confirm("Wirklich ALLE Spielfarben auf ihre Cover-Durchschnittsfarbe zuruecksetzen? Das ueberschreibt auch manuell gesetzte Farben.")) return;
+  afterAction(apiPostJson("/api/reset_all_colors", {}));
 });
 
 if (cfg.ip) {

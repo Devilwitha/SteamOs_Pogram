@@ -42,6 +42,7 @@ import signal
 import sqlite3
 import subprocess
 import sys
+import threading
 import time
 from pathlib import Path
 
@@ -442,6 +443,107 @@ def update_led(current):
         _last_led_color = color
 
 
+def reset_led_cache():
+    """Erzwingt beim naechsten update_led()-Aufruf ein erneutes Senden der
+    aktuellen Farbe, auch wenn sie sich softwareseitig nicht geaendert hat.
+    Fuer main(), nachdem ein Aufwachen aus dem Suspend erkannt wurde (siehe
+    dort): ein angeschlossenes Geraet (Led_Pico/USB-RGB) kann waehrend des
+    Suspends seinen Zustand verloren haben (z. B. Stromverlust am
+    USB-Port), obwohl pico_client.py selbst unveraendert von "Weiss"
+    ausgeht - ohne Cache-Reset wuerde update_led() das Senden faelschlich
+    uebersehen, weil sich die Farbe aus seiner Sicht nicht geaendert hat."""
+    global _last_led_color
+    _last_led_color = _UNSET
+
+
+def blink_leds(color, cycles=3, on_seconds=0.15, off_seconds=0.15):
+    """Laesst Led_Pico/OpenRGB kurz zwischen der angegebenen Farbe und Aus
+    hin- und herblinken - fuer das Sleep/Shutdown-Blinken (siehe
+    _start_sleep_shutdown_listener()). Bewusst kurz gehalten (Standard
+    < 1s insgesamt): systemd-logind gibt Programmen nur eine begrenzte Zeit
+    (siehe logind.conf, i. d. R. wenige Sekunden), bevor es mit dem
+    Schlafen/Herunterfahren fortfaehrt, auch wenn noch reagiert wird -
+    dieser Aufruf nimmt bewusst keinen eigenen Inhibitor-Lock (siehe
+    Docstring dort), das Blinken muss also von selbst schnell genug sein.
+    Ruft am Ende reset_led_cache() auf, damit die naechste normale
+    update_led()-Runde (z. B. nach einem abgebrochenen Suspend, oder nach
+    dem Aufwachen) die eigentliche Farbe zuverlaessig wiederherstellt."""
+    led_config = led_link.load_config()
+    led_tcp_port = led_config.get("tcp_port", 5007)
+    led_udp_port = led_config.get("udp_port", 5008)
+    led_ip = led_config.get("led_pico_ip") or _led_pico_ip or led_link.discover_led_pico(led_udp_port)
+
+    for _ in range(cycles):
+        if led_ip:
+            led_link.set_color(led_ip, led_tcp_port, color)
+        openrgb_link.set_color(color)
+        time.sleep(on_seconds)
+        if led_ip:
+            led_link.turn_off(led_ip, led_tcp_port)
+        openrgb_link.turn_off()
+        time.sleep(off_seconds)
+
+    reset_led_cache()
+
+
+def _start_sleep_shutdown_listener():
+    """Startet einen Hintergrund-Thread, der ueber DBus (System-Bus,
+    org.freedesktop.login1.Manager) auf die Signale PrepareForSleep und
+    PrepareForShutdown lauscht - beide werden mit einem bool-Argument
+    gesendet (True kurz bevor der PC tatsaechlich schlafen geht bzw.
+    herunterfaehrt, False beim Aufwachen bzw. bei einem abgebrochenen
+    Shutdown). Bei True wird einmal kurz in der zuletzt gezeigten Farbe
+    geblinkt (siehe blink_leds()) - komplett optional per
+    led_settings.json umschaltbar (siehe led_settings.is_enabled()/
+    is_blink_on_sleep_enabled()).
+
+    Nutzt dbus-python + eine GLib-Ereignisschleife (beide auf SteamOS/
+    Bazzite bereits systemweit vorhanden, siehe README) statt einer
+    zusaetzlichen Abhaengigkeit. Faengt jeden Fehler beim Aufsetzen ab
+    (z. B. falls eine der Bibliotheken doch fehlt oder kein System-Bus
+    erreichbar ist) und laeuft dann einfach ohne dieses Feature weiter,
+    statt den ganzen Dienst zum Absturz zu bringen - rein optionales
+    Extra, RFID-Tag-Erkennung/Spielstart haengen nicht davon ab."""
+    try:
+        import dbus
+        from dbus.mainloop.glib import DBusGMainLoop
+        from gi.repository import GLib
+    except ImportError as e:
+        print(f"Sleep/Shutdown-Blinken nicht verfuegbar (DBus/PyGObject fehlt: {e}) - wird uebersprungen.", flush=True)
+        return
+
+    def on_prepare(start, anlass):
+        if not start:
+            return
+        if not led_settings.is_enabled() or not led_settings.is_blink_on_sleep_enabled():
+            return
+        color = _last_led_color
+        if color in (None, _UNSET, _LED_DISABLED):
+            color = led_settings.get_idle_color()
+        print(f"{anlass} steht bevor - LEDs blinken.", flush=True)
+        blink_leds(color)
+
+    def run_loop():
+        try:
+            DBusGMainLoop(set_as_default=True)
+            bus = dbus.SystemBus()
+            bus.add_signal_receiver(
+                lambda start: on_prepare(bool(start), "Suspend"),
+                signal_name="PrepareForSleep",
+                dbus_interface="org.freedesktop.login1.Manager",
+            )
+            bus.add_signal_receiver(
+                lambda start: on_prepare(bool(start), "Shutdown"),
+                signal_name="PrepareForShutdown",
+                dbus_interface="org.freedesktop.login1.Manager",
+            )
+            GLib.MainLoop().run()
+        except Exception as e:
+            print(f"Sleep/Shutdown-Blinken: Fehler beim Einrichten: {e}", flush=True)
+
+    threading.Thread(target=run_loop, name="sleep-shutdown-listener", daemon=True).start()
+
+
 def main():
     config = pico_link.load_config()
     interval = config.get("interval_seconds", 3)
@@ -459,14 +561,46 @@ def main():
     # statt mit ihren eigenen Werkseffekten (Rainbow etc.) weiterzulaufen -
     # rein optional, ohne laufenden OpenRGB-Server ein stiller No-Op.
     openrgb_link.turn_off_others()
+    # Blinkt die LEDs kurz an, sobald der PC schlafen geht/herunterfaehrt
+    # (siehe dort) - laeuft in einem eigenen Hintergrund-Thread, blockiert
+    # main() also nicht.
+    _start_sleep_shutdown_listener()
+
+    # Fuer die Suspend-Erkennung unten - bewusst time.monotonic() statt
+    # time.time(), da Monotonic-Zeit beim Suspend selbst mit pausiert
+    # (die reale Uhrzeit springt beim Aufwachen einfach weiter, aber auch
+    # der ganze Prozess war ja die ganze Zeit pausiert - der Vergleich
+    # unten erkennt also zuverlaessig eine lange reale Pause).
+    last_loop_time = time.monotonic()
 
     while True:
+        now_monotonic = time.monotonic()
+        # Eine Zeitluecke deutlich groesser als interval zwischen zwei
+        # Durchlaeufen bedeutet praktisch immer: der PC war im Suspend und
+        # ist gerade aufgewacht (der Prozess pausiert dabei einfach, siehe
+        # oben). LED-Cache zuruecksetzen (siehe reset_led_cache()), damit
+        # die aktuelle Farbe garantiert neu gesendet wird, auch falls ein
+        # angeschlossenes Geraet waehrend des Suspends seinen Zustand
+        # verloren hat.
+        if now_monotonic - last_loop_time > interval * 5:
+            print("Aus dem Suspend aufgewacht - LED-Zustand wird neu gesendet.", flush=True)
+            reset_led_cache()
+        last_loop_time = now_monotonic
+
         if not pico_ip:
             print("Suche Pico im Netzwerk...", flush=True)
             pico_ip = pico_link.discover_pico(udp_port)
             if pico_ip:
                 print(f"Pico gefunden unter {pico_ip}", flush=True)
 
+        # current bleibt None, wenn der Pico nicht gefunden/erreichbar ist -
+        # update_led() (siehe unten, jetzt bei jedem Durchlauf aufgerufen,
+        # nicht nur wenn der Pico erreichbar ist) zeigt dann ueber
+        # resolve_led_color() automatisch die Leerlauf-Farbe (Standard
+        # Weiss) an, statt die LEDs unveraendert im letzten Zustand zu
+        # lassen - so leuchten sie schon, sobald dieser Dienst startet,
+        # auch bevor/ohne dass der Pico ueberhaupt gefunden wurde.
+        current = None
         if pico_ip:
             reachable = pico_link.ping_pico(pico_ip, tcp_port)
             timestamp = time.strftime("%H:%M:%S")
@@ -480,7 +614,6 @@ def main():
                 current = pico_link.fetch_current(pico_ip, tcp_port)
                 check_game_still_active(current)
                 handle_tag(pico_ip, tcp_port, timestamp)
-                update_led(current)
             else:
                 print(f"[{timestamp}] Pico NICHT erreichbar, versuche erneut...", flush=True)
                 pico_link.write_state("nicht_erreichbar", pico_ip)
@@ -495,6 +628,7 @@ def main():
             print(f"[{time.strftime('%H:%M:%S')}] Pico nicht gefunden", flush=True)
             pico_link.write_state("nicht_gefunden", None)
 
+        update_led(current)
         time.sleep(interval)
 
 

@@ -90,7 +90,7 @@ Tabelle `games`:
 | `installed` | `1`, falls der Installationsordner tatsaechlich vorhanden ist, sonst `0` |
 | `install_path` | Pfad zum installierten Spiel, nur gesetzt wenn `installed = 1` |
 | `launch_command` | `steam -applaunch <appid>`, nur gesetzt wenn `installed = 1` (startet das Spiel inkl. Proton-Kompatibilitaetsschicht ueber den Steam-Client) |
-| `color` | Optionale, in der GUI zugewiesene Farbe (Hex, z. B. `#ff8800`) fuer den [Led_Pico](../Led_Pico) - wird von `game_scanner.py` beim erneuten Scannen **nicht** ueberschrieben |
+| `color` | Farbe (Hex, z. B. `#ff8800`) fuer LED-Anzeige (Led_Pico/OpenRGB) - manuell in der GUI zuweisbar, sonst automatisch aus dem Steam-Cover ermittelt (siehe unten) - wird von `game_scanner.py` beim erneuten Scannen **nicht** ueberschrieben, sobald einmal gesetzt |
 | `audio_path` | Pfad zur in der GUI hochgeladenen Sound-Datei (siehe `gui/gui_server.py`), oder `NULL` ohne hinterlegten Sound - wird beim erneuten Scannen **nicht** ueberschrieben |
 | `audio_enabled` | `1` (Standard) = Sound wird beim Tag-Start automatisch abgespielt, `0` = Datei bleibt erhalten, wird aber nur noch manuell (Test-Play-Button) abgespielt - per "Aktiv"/"Inaktiv"-Button in der GUI umschaltbar |
 | `last_scanned` | Zeitpunkt des letzten Scans |
@@ -105,6 +105,29 @@ python3 steamOs/game_scanner.py
 (`steamos-game-scanner.timer`) ein, der die Bibliothek beim Booten und
 danach alle 30 Minuten neu scannt, damit neu installierte oder entfernte
 Spiele automatisch erfasst werden.
+
+### Automatische Farbermittlung aus dem Steam-Cover
+
+Neue Spiele ohne eigene `color` bekommen bei jedem Scan automatisch eine
+zugewiesen: `game_scanner.py` sucht in Steams eigenem lokalem Bildcache
+(`~/.local/share/Steam/appcache/librarycache/<appid>/`, bevorzugt
+`library_600x900.jpg`, sonst `header.jpg` oder eine beliebige andere Datei
+im Ordner) nach einem Cover und ermittelt daraus per
+[Pillow](https://pillow.readthedocs.io/) (`pip install --user pillow` -
+anders als der Rest von `steamOs/` bewusst nicht auf die Standardbibliothek
+beschraenkt, siehe `openrgb-python`-Begruendung weiter unten) die
+haeufigste Farbe einer stark reduzierten Farbpalette (deutlich lebendiger
+als ein reiner Pixel-Mittelwert). Ohne brauchbares Cover oder ohne
+installiertes Pillow wird stattdessen eine kraeftige Zufallsfarbe
+verwendet - nie fuer alle Spiele dieselbe Farbe. Einmal gesetzte Farben
+werden bei spaeteren Scans **nicht** mehr angetastet (weder automatisch
+noch manuell gesetzte).
+
+In der GUI (sowie der Pico-Steuerseite) setzt der Button
+**"Farben zuruecksetzen..."** oberhalb der Spieletabelle die Farbe
+*aller* Spiele auf ihre automatisch ermittelte zurueck - das
+ueberschreibt auch manuell zugewiesene Farben (mit
+Sicherheitsabfrage, da nicht rueckgaengig zu machen).
 
 ### Windows-Testversion (`game_scanner_windows.py`)
 

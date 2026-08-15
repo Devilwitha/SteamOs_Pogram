@@ -132,6 +132,10 @@ __AUDIO_MODE_PANEL__
 <h2 style="margin-top:0">LED-Einstellungen</h2>
 __LED_SETTINGS_PANEL__
 </div>
+<form method="POST" action="/reset_all_colors" class="inline-form" style="margin-bottom:14px"
+      onsubmit="return confirm('Wirklich ALLE Spielfarben auf ihre Cover-Durchschnittsfarbe zuruecksetzen? Das ueberschreibt auch manuell gesetzte Farben.');">
+<button type="submit" class="secondary">Farben zuruecksetzen...</button>
+</form>
 <div class="panel">
 <table>
 <thead>
@@ -167,7 +171,10 @@ loeschenden Tag an den RC522 halten - er wird beim naechsten Erkennen komplett e
 wieder bekannt zu sein.</p>
 <p class="hint">Farbe: Ein Klick auf das Farbfeld speichert die Auswahl sofort. Die Farbe eines Tags
 hat Vorrang vor der Farbe des verknuepften Spiels und wird an einen optionalen zweiten Pico
-(Led_Pico) weitergereicht, der damit einen LED-Streifen ansteuert.</p>
+(Led_Pico) weitergereicht, der damit einen LED-Streifen ansteuert. Neue Spiele ohne eigene
+Farbe bekommen beim Scan automatisch eine aus ihrem Steam-Cover ermittelte Farbe (sonst eine
+Zufallsfarbe) - "Farben zuruecksetzen..." wirft alle Spielfarben weg (auch manuell gesetzte)
+und ermittelt sie neu aus den Covern.</p>
 <p class="hint">Sound: Ueber das Dateifeld eine MP3/WAV/OGG/FLAC/M4A-Datei je Spiel hochladen - sie wird
 lokal abgelegt und ab dann immer von dort geladen. &#9658; spielt sie hier zum Test ab, &#9632; stoppt
 die Wiedergabe, &#10005; entfernt die Verknuepfung wieder. "Aktiv"/"Inaktiv" schaltet nur die
@@ -185,7 +192,9 @@ erhalten und stehen nach Zurueckwechseln auf "Einzelne Songs je Spiel" wieder wi
 Led_Pico sowie lokale USB-RGB-LEDs (siehe OpenRGB-Konfiguration) gemeinsam ein/aus. Das Farbfeld
 legt fest, welche Farbe angezeigt wird, wenn kein Tag aufliegt bzw. weder Tag noch verknuepftes
 Spiel eine eigene Farbe haben ("Konsole an" - Standard Weiss) - sobald ein Tag mit Farbe aufliegt,
-hat dessen Farbe wie gewohnt Vorrang.</p>
+hat dessen Farbe wie gewohnt Vorrang. "Blinken bei Sleep/Shutdown": laesst die LEDs kurz in der
+zuletzt gezeigten Farbe blinken, sobald der PC in den Standby geht oder heruntergefahren wird -
+unabhaengig vom Hauptschalter separat umschaltbar.</p>
 </div>
 </body>
 </html>
