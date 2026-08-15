@@ -373,6 +373,46 @@ automatische Suche per UDP-Broadcast, sonst fest eintragen. Ist kein
 Display im Netzwerk konfiguriert/erreichbar, laeuft der Dienst einfach
 weiter, ohne dass das sonst irgendwelche Auswirkungen hat.
 
+## Wake-on-USB (Controller weckt den PC aus dem Standby)
+
+`install.sh` richtet zusaetzlich eine udev-Regel ein, die den PC aus dem
+Standby (S3-Suspend) aufweckt, sobald am konfigurierten USB-Controller
+etwas passiert (z. B. Einschalten) - unabhaengig vom RFID-Pico/Wake-on-LAN
+weiter oben. Betrifft standardmaessig den **8BitDo Ultimate 2**
+(USB-ID `2dc8:6013`) - fuer einen anderen Controller die Variablen
+`CONTROLLER_VENDOR_ID`/`CONTROLLER_PRODUCT_ID` am Anfang des
+entsprechenden Abschnitts in `install.sh` anpassen (Wert per `lsusb`
+ermitteln).
+
+Ablauf beim Ausfuehren von `install.sh`:
+
+1. Die USB-Bus-Nummer des Controllers wird dynamisch ueber seine USB-ID
+   ermittelt (nicht fest einkompiliert, da sie sich mit dem physischen
+   Port aendern kann).
+2. Eine persistente Regel wird nach `/etc/udev/rules.d/10-wakeup.rules`
+   geschrieben (`SUBSYSTEM=="usb", KERNEL=="usbN", ATTR{power/wakeup}="enabled"`),
+   die dafuer sorgt, dass der Bus nach jedem Neustart/erneuten Einstecken
+   automatisch als Wake-Quelle aktiviert wird.
+3. Der aktuelle Zustand wird zusaetzlich sofort direkt gesetzt
+   (`udevadm trigger` allein wirkt bei einem bereits verbundenen Geraet
+   oft nicht zuverlaessig).
+
+**Voraussetzungen (im BIOS/UEFI, nicht Teil dieses Repos):**
+"Wake from USB"/"USB Wake Support" aktivieren, "ErP Mode" deaktivieren
+(schaltet sonst USB-Strom im Standby ab). Wake funktioniert **nicht** ueber
+Bluetooth, nur ueber eine echte USB-Verbindung (auch ein 2,4-GHz-USB-Dongle
+zaehlt dafuer als USB).
+
+Dieser Schritt ist der einzige in `install.sh`, der `sudo` braucht (Schreiben
+nach `/etc/udev/rules.d/`) - schlaegt er fehl, wird das mit einer
+Fehlermeldung uebersprungen, ohne den Rest des Skripts abzubrechen. Ist der
+Controller beim Ausfuehren von `install.sh` nicht angeschlossen, wird dieser
+Schritt uebersprungen (Hinweis wird ausgegeben) - `install.sh` bei
+angeschlossenem Controller erneut ausfuehren, um es nachzuholen. Status
+pruefen: `cat /sys/bus/usb/devices/usbN/power/wakeup` (sollte `enabled`
+zeigen, `usbN` durch die tatsaechliche Bus-Nummer ersetzen). `uninstall.sh`
+entfernt die Regel wieder.
+
 ## Konfiguration (`config.json`)
 
 ```json
