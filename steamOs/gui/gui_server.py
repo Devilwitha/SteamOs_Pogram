@@ -48,7 +48,7 @@ import pico_link  # noqa: E402
 DB_PATH = STEAMOS_DIR / "games.db"
 AUDIO_DIR = STEAMOS_DIR / "audio"
 HOST = "127.0.0.1"
-PORT = 8080
+DEFAULT_PORT = 8090
 # Diese Endungen werden beim Hochladen akzeptiert (siehe _handle_set_game_audio) -
 # audio_player.play() spielt sie plattformabhaengig ab (Windows: MCI, kann alle
 # vier; Linux: je nach verfuegbarem Kommandozeilenplayer, siehe audio_player.py).
@@ -758,12 +758,13 @@ def main():
     # sind also unveraendert nur lokal erreichbar.
     config = pico_link.load_config()
     host = config.get("gui_bind") or HOST
-    with socketserver.TCPServer((host, PORT), Handler) as httpd:
+    port = config.get("gui_port") or DEFAULT_PORT
+    with socketserver.TCPServer((host, port), Handler) as httpd:
         display_host = "127.0.0.1" if host == "0.0.0.0" else host
-        url = f"http://{display_host}:{PORT}/"
+        url = f"http://{display_host}:{port}/"
         print(f"GUI laeuft unter {url}")
         if host == "0.0.0.0":
-            print(f"Im LAN erreichbar unter Port {PORT} (Token-geschuetzt, siehe config.json)")
+            print(f"Im LAN erreichbar unter Port {port} (Token-geschuetzt, siehe config.json)")
         try:
             webbrowser.open(url)
         except Exception:

@@ -12,10 +12,12 @@ mkdir -p "$USER_SYSTEMD_DIR"
 cp "$SCRIPT_DIR/steamos-pico-monitor.service" "$USER_SYSTEMD_DIR/"
 cp "$SCRIPT_DIR/steamos-game-scanner.service" "$USER_SYSTEMD_DIR/"
 cp "$SCRIPT_DIR/steamos-game-scanner.timer" "$USER_SYSTEMD_DIR/"
+cp "$SCRIPT_DIR/steamos-gui-server.service" "$USER_SYSTEMD_DIR/"
 
 systemctl --user daemon-reload
 systemctl --user enable --now steamos-pico-monitor.service
 systemctl --user enable --now steamos-game-scanner.timer
+systemctl --user enable --now steamos-gui-server.service
 # Sofortiger erster Scan, statt auf OnBootSec zu warten:
 systemctl --user start steamos-game-scanner.service
 
@@ -29,6 +31,8 @@ echo
 echo "Fertig. Status pruefen mit:"
 echo "  systemctl --user status steamos-pico-monitor.service"
 echo "  systemctl --user status steamos-game-scanner.timer"
+echo "  systemctl --user status steamos-gui-server.service"
 echo "Logs ansehen mit:"
 echo "  journalctl --user -u steamos-pico-monitor.service -f"
 echo "  journalctl --user -u steamos-game-scanner.service -f"
+echo "  journalctl --user -u steamos-gui-server.service -f"
