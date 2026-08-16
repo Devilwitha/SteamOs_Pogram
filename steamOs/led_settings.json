@@ -1,1 +1,1 @@
-{"enabled": true, "idle_color": "#7686a0", "blink_on_sleep": true, "download_pulse": true, "download_gradient_start": "#ff0000", "download_gradient_mid": "#ffff00", "download_gradient_end": "#ff4d6d", "download_gradient_enabled": true}
+{"enabled": true, "idle_color": "#ffffff", "blink_on_sleep": true, "download_pulse": true, "download_gradient_start": "#ff0000", "download_gradient_mid": "#ffff00", "download_gradient_end": "#00ff00", "download_gradient_enabled": true}

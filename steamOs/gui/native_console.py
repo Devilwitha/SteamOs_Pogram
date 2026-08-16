@@ -298,13 +298,18 @@ def tags_rows(state):
     if not tags:
         return [info_row("Noch keine Tags erkannt. Einen Tag an den RC522 halten.")]
     game_names = {g["uid"]: g["name"] for g in state["games"]}
+    game_colors = {g["uid"]: g["color"] for g in state["games"]}
     rows = []
     for t in tags:
         def make(tag):
             sub = ("→ " + game_names.get(tag.get("game_uid"), tag.get("game_uid"))) if tag.get("game_uid") else "nicht verknüpft"
+            # Kein eigenes Tag-Farbfeld mehr (genau eine Farbe pro Spiel
+            # statt zwei potenziell widerspruechlichen) - der Farbklecks
+            # zeigt deshalb die Farbe des verknuepften Spiels, falls
+            # vorhanden.
             return Row(
                 "list-item", short_uid(tag["uid"]),
-                color_fn=lambda: hex_to_rgb(tag.get("color")),
+                color_fn=lambda: hex_to_rgb(game_colors.get(tag.get("game_uid"))),
                 subtext_fn=lambda: sub,
                 on_activate=lambda: open_tag_actions(tag, state),
             )
@@ -316,8 +321,6 @@ def open_tag_actions(tag, state):
     items = [button_row("Verknüpfen mit...", lambda: open_game_picker(tag, state) or None)]
     if tag.get("game_uid"):
         items.append(button_row("Trennen", lambda: api("/api/unlink_tag", {"uid": tag["uid"]})))
-    items.append(color_row("Farbe", tag.get("color"),
-                            lambda c: api("/api/set_tag_color", {"uid": tag["uid"], "color": c})))
 
     def delete():
         r = api("/api/forget_tag", {})
@@ -330,9 +333,16 @@ def open_tag_actions(tag, state):
 
 
 def open_game_picker(tag, state):
-    games = state["games"]
+    # Spiele, die bereits an einen ANDEREN Tag verknuepft sind, werden aus
+    # der Auswahl ausgeblendet (ein Spiel soll nicht versehentlich an
+    # mehrere Tags gleichzeitig haengen).
+    linked_elsewhere = {
+        t.get("game_uid") for t in state["tags"]
+        if t.get("game_uid") and t["uid"] != tag["uid"]
+    }
+    games = [g for g in state["games"] if g["uid"] not in linked_elsewhere]
     if not games:
-        open_submenu("Verknüpfen: " + short_uid(tag["uid"]), [info_row("Keine Spiele in der Datenbank.")])
+        open_submenu("Verknüpfen: " + short_uid(tag["uid"]), [info_row("Keine verfügbaren Spiele (alle bereits verknüpft).")])
         return
 
     def make(game):

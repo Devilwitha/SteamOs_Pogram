@@ -94,7 +94,7 @@ LED-Streifen, der das erkannte Spiel/den Tag farblich anzeigt.
 | Pico -> SteamOS | TCP 5005 | `TAGS:<json>` | Liste `[{"uid":..., "game_uid":...}, ...]` |
 | SteamOS -> Pico | TCP 5005 | `LINK:<uid>:<spiel-uid>` | Verknuepft einen bekannten Tag direkt mit einem Spiel (leer = trennen) |
 | Pico -> SteamOS | TCP 5005 | `OK:LINK:<uid>` / `ERROR:unknown_tag` | Bestaetigung bzw. Fehler |
-| SteamOS -> Pico | TCP 5005 | `TAGCOLOR:<uid>:<farbe>` | Setzt (leer = loescht) die eigene Farbe eines bekannten Tags |
+| SteamOS -> Pico | TCP 5005 | `TAGCOLOR:<uid>:<farbe>` | Setzt (leer = loescht) die eigene Farbe eines bekannten Tags - vom Pico weiterhin unterstuetzt, wird von der aktuellen GUI aber nicht mehr gesendet (genau eine Farbe pro Spiel statt separater Tag-Farbe, siehe [steamOs/README.md](steamOs/README.md#farbe-pro-spiel-fuer-den-led_pico)) |
 | Pico -> SteamOS | TCP 5005 | `OK:TAGCOLOR:<uid>` / `ERROR:unknown_tag` | Bestaetigung bzw. Fehler |
 | SteamOS -> Pico | TCP 5005 | `CURRENT?` | Fragt den gerade aufliegenden Tag ab (nicht einmalig wie `TAG?`) |
 | Pico -> SteamOS | TCP 5005 | `CURRENT:<json>` / `CURRENT:NONE` | `{"uid":..., "game_uid":..., "game_name":..., "color":..., "status":...}`, oder nichts aufliegend - Grundlage fuer die Led_Pico-Farbe. `status` ist `erkannt`/`gesendet`/`gestartet` (siehe [Pico/README.md](Pico/README.md)) |

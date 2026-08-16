@@ -291,16 +291,18 @@ die `‹`/`›`-Pfeile bei Farb-/Modus-Zeilen) funktionieren zusaetzlich -
 nuetzlich zum Testen ohne Controller, z. B. direkt per
 `python3 steamOs/gui/launch_dashboard.py` im Desktop-Modus.
 
-### Farbe pro Spiel/Tag (fuer den Led_Pico)
+### Farbe pro Spiel (fuer den Led_Pico)
 
-Sowohl in der Spiele- als auch in der Tag-Tabelle gibt es eine Spalte
-"Farbe" mit einem Farbfeld je Zeile - Aenderungen werden sofort
-gespeichert (Spiel-Farbe direkt in `games.db`, Tag-Farbe per
-`TAGCOLOR:<uid>:<farbe>` auf dem Pico). Eine am Tag gesetzte Farbe hat
-Vorrang vor der Farbe des verknuepften Spiels. Beide werden von
-`pico_client.py` genutzt, um einen optionalen zweiten Pico (siehe
-[../Led_Pico](../Led_Pico)) mit der passenden Farbe fuer einen
-LED-Streifen zu versorgen - siehe
+In der Spiele-Tabelle gibt es eine Spalte "Farbe" mit einem Farbfeld je
+Zeile - Aenderungen werden sofort direkt in `games.db` gespeichert. Genau
+eine Farbe pro Spiel (bewusst keine zusaetzliche, separate Tag-Farbe mehr -
+fruehers TAGCOLOR-Feature war zwei potenziell widerspruechliche Farben pro
+Spiel/Tag-Paar). Die Tag-Tabelle hat deshalb keine eigene Farbspalte mehr;
+im Controller-Einstellungsmenue (siehe unten) zeigt ein Farbklecks je Tag
+aber weiterhin zur Information die Farbe des jeweils verknuepften Spiels.
+`pico_client.py` nutzt die Spielfarbe, um einen optionalen
+zweiten Pico (siehe [../Led_Pico](../Led_Pico)) mit der passenden Farbe
+fuer einen LED-Streifen zu versorgen - siehe
 [Automatischer Spielstart](#automatischer-spielstart-per-rfid-tag) und
 [Konfiguration des Led_Pico](#konfiguration-des-led_pico-led_configjson)
 unten.
@@ -380,12 +382,23 @@ Takt zusaetzlich Folgendes:
    gestartet, solange derselbe Tag liegen bleibt.
 4. Unabhaengig davon wird bei jedem Takt zusaetzlich per `CURRENT?` der
    aktuell aufliegende Tag abgefragt (nicht einmalig wie `TAG?`, siehe
-   oben) und die daraus ermittelte Farbe (Tag-Farbe, sonst Spiel-Farbe,
-   sonst Weiss im Leerlauf - siehe `pico_client.IDLE_LED_COLOR`) an einen
-   optionalen [Led_Pico](../Led_Pico) sowie optionale lokale USB-RGB-LEDs
-   per OpenRGB (siehe [Corsair/OpenRGB-LEDs](#corsair-openrgb-usb-rgb-leds))
-   weitergereicht - jeweils nur wenn sie sich seit dem letzten Takt
-   geaendert hat.
+   oben) und die daraus ermittelte Farbe (Farbe des verknuepften Spiels,
+   sonst Weiss im Leerlauf - konfigurierbar, siehe `led_settings.py`/
+   `resolve_led_color()`) an einen optionalen [Led_Pico](../Led_Pico)
+   sowie optionale lokale USB-RGB-LEDs per OpenRGB (siehe
+   [Corsair/OpenRGB-LEDs](#corsair-openrgb-usb-rgb-leds)) weitergereicht -
+   jeweils nur wenn sie sich seit dem letzten Takt geaendert hat.
+5. **Auch ganz ohne aufliegenden Tag** (oder ganz ohne Pico) ermittelt
+   `pico_client.py` bei jedem Takt zusaetzlich per Prozess-Scan
+   (`_scan_for_process_color()`), ob eines der installierten Spiele gerade
+   laeuft (z. B. direkt ueber Steam Big Picture gestartet, ohne RFID) -
+   dessen Farbe wird dann genauso an die LEDs weitergereicht wie bei einem
+   per Tag erkannten Spiel. Bevorzugt dafuer Steams eigenen `reaper`-
+   Prozess (`SteamLaunch AppId=<id>`, bleibt zuverlaessig fuer die
+   komplette Spielsitzung bestehen) statt eines reinen Abgleichs gegen den
+   Installationspfad, der bei Proton-Spielen nur kurzlebige Bootstrap-
+   Prozesse faende, nicht das eigentliche (unter einem virtuellen
+   Windows-Pfad laufende) Spiel.
 
 ### Automatisches Beenden bei entferntem/gewechseltem Tag
 
@@ -407,10 +420,14 @@ in `pico_client.py`):
   Start erzeugten Prozess wuerde das Spiel selbst also i. d. R. **nicht**
   stoppen. `stop_game()` sucht deshalb zusaetzlich (Linux/`/proc`) nach
   laufenden Prozessen unterhalb von `install_path` des Spiels und schickt
-  diesen `SIGTERM`. Das ist ein Best-Effort-Ansatz (kein offizieller
-  Steam-Mechanismus) - bei Spielen mit ungewoehnlicher Prozessstruktur
-  (z. B. mehrere unabhaengige Prozesse ausserhalb von `install_path`,
-  manche Proton-Spiele) kann das Beenden unvollstaendig bleiben.
+  diesen `SIGTERM` - zusaetzlich, sofern gefunden, auch an Steams eigenen
+  `reaper`-Prozess (`SteamLaunch AppId=<id>`, siehe oben): der beendet
+  beim Empfang von `SIGTERM` zuverlaessig auch das von ihm ueberwachte
+  Spiel mit, selbst wenn der eigentliche Spielprozess (z. B. bei Proton
+  unter einem virtuellen Windows-Pfad) sich nicht ueber `install_path`
+  finden liesse. Das bleibt trotzdem ein Best-Effort-Ansatz (kein
+  offizieller Steam-Mechanismus) - bei Spielen mit ungewoehnlicher
+  Prozessstruktur kann das Beenden unvollstaendig bleiben.
 
 Die worst-case Verzoegerung zwischen tatsaechlichem Entfernen des Tags und
 dem Beenden des Spiels ist die Summe aus `tag_manager.TAG_GRACE_MS` (Pico,
@@ -460,6 +477,12 @@ Farbe wie der Led_Pico (siehe oben), aber lokal am PC. Setzt voraus:
    (`steamos-openrgb.service`, wird von `install.sh` nur eingerichtet,
    wenn OpenRGB tatsaechlich installiert ist - sonst wuerde der Dienst mit
    `Restart=always` endlos gegen eine fehlende Flatpak-App fehlschlagen).
+   Laeuft dabei bewusst mit `QT_QPA_PLATFORM=offscreen` (siehe
+   `steamos-openrgb.service`): im Game Mode sind weder `DISPLAY` noch
+   `WAYLAND_DISPLAY` in der systemd-Sitzung gesetzt, OpenRGB (Qt) stuerzt
+   ohne diese Variable dort sofort und dauerhaft ab, sobald es einen
+   Anzeige-Server sucht - unnoetig, da OpenRGB hier nur als headless
+   SDK-Server laeuft.
 2. Die offizielle Python-Bibliothek installiert:
    `pip install --user openrgb-python` (anders als der Rest von `steamOs/`
    bewusst nicht auf die Standardbibliothek beschraenkt - das binaere

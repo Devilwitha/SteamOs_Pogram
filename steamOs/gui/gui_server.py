@@ -13,11 +13,12 @@ direkt mit einem Spiel verknuepft oder wieder getrennt werden, ohne sie
 erneut an den Leser zu halten (zweite Richtung neben "Spiel waehlen,
 dann Tag scannen").
 
-Sowohl Spielen als auch Tags laesst sich hier zusaetzlich eine eigene
-Farbe zuweisen (Farbfeld je Zeile, speichert bei Aenderung sofort). Eine
-Tag-Farbe hat Vorrang vor der Farbe des verknuepften Spiels. Beide werden
-von steamOs/pico_client.py an einen optionalen zweiten Pico (siehe
-../../Led_Pico) weitergereicht, der damit einen LED-Streifen ansteuert.
+Spielen laesst sich hier zusaetzlich eine eigene Farbe zuweisen (Farbfeld
+je Zeile, speichert bei Aenderung sofort) - genau eine Farbe pro Spiel,
+keine separate Tag-Farbe mehr (fruehers TAGCOLOR-Feature, siehe
+Git-Historie). Diese Farbe wird von steamOs/pico_client.py an einen
+optionalen zweiten Pico (siehe ../../Led_Pico) weitergereicht, der damit
+einen LED-Streifen ansteuert.
 
 Nutzt nur die Python-Standardbibliothek (kein Tkinter/Qt noetig), damit es
 ohne zusaetzliche Pakete auf SteamOS laeuft (schreibgeschuetztes
@@ -416,20 +417,27 @@ def _render_game_rows(games, show_audio=True):
 
 def _render_tag_rows(tags, games):
     if tags is None:
-        return "<tr><td colspan='5'>Pico nicht erreichbar - Tag-Liste kann nicht geladen werden.</td></tr>"
+        return "<tr><td colspan='4'>Pico nicht erreichbar - Tag-Liste kann nicht geladen werden.</td></tr>"
     if not tags:
-        return "<tr><td colspan='5'>Noch keine Tags erkannt. Einen Tag an den RC522 halten.</td></tr>"
+        return "<tr><td colspan='4'>Noch keine Tags erkannt. Einen Tag an den RC522 halten.</td></tr>"
 
     game_names = {g["uid"]: g["name"] for g in games}
+    # Spiele, die bereits an einen ANDEREN Tag verknuepft sind, tauchen in
+    # der Auswahlliste eines Tags nicht mehr auf (siehe Chatverlauf - sonst
+    # liesse sich ein Spiel versehentlich an mehrere Tags gleichzeitig
+    # haengen). Das eigene, bereits verknuepfte Spiel eines Tags bleibt in
+    # dessen eigener Liste natuerlich weiterhin sichtbar/ausgewaehlt.
+    linked_elsewhere = {t.get("game_uid") for t in tags if t.get("game_uid")}
 
     rows = []
     for tag in tags:
         uid = tag.get("uid", "")
         game_uid = tag.get("game_uid")
-        color = tag.get("color") or "#00e5ff"
 
         options = ["<option value=''>Spiel waehlen ...</option>"]
         for g in games:
+            if g["uid"] in linked_elsewhere and g["uid"] != game_uid:
+                continue
             selected = " selected" if g["uid"] == game_uid else ""
             options.append(f"<option value='{g['uid']}'{selected}>{_escape(g['name'])}</option>")
 
@@ -449,12 +457,6 @@ def _render_tag_rows(tags, games):
             "<tr>"
             f"<td class='uid'>{uid}</td>"
             f"<td>{status_html}</td>"
-            "<td>"
-            "<form method='POST' action='/set_tag_color' class='inline-form'>"
-            f"<input type='hidden' name='uid' value='{uid}'>"
-            f"<input type='color' name='color' value='{color}' onchange='this.form.submit()'>"
-            "</form>"
-            "</td>"
             "<td>"
             "<form method='POST' action='/link_tag' class='inline-form'>"
             f"<input type='hidden' name='uid' value='{uid}'>"
@@ -783,7 +785,6 @@ API_ROUTES = {
     "/api/link_tag": "_api_link_tag",
     "/api/unlink_tag": "_api_unlink_tag",
     "/api/set_game_color": "_api_set_game_color",
-    "/api/set_tag_color": "_api_set_tag_color",
     "/api/forget_tag": "_api_forget_tag",
     "/api/set_game_audio": "_api_set_game_audio",
     "/api/remove_game_audio": "_api_remove_game_audio",
@@ -914,7 +915,6 @@ class Handler(http.server.BaseHTTPRequestHandler):
             "/link_tag": self._handle_link_tag,
             "/unlink_tag": self._handle_unlink_tag,
             "/set_game_color": self._handle_set_game_color,
-            "/set_tag_color": self._handle_set_tag_color,
             "/forget_tag": self._handle_forget_tag,
             "/set_game_audio": self._handle_set_game_audio,
             "/remove_game_audio": self._handle_remove_game_audio,
@@ -997,22 +997,6 @@ class Handler(http.server.BaseHTTPRequestHandler):
             return "<div class='message error'>Keine Spiel-UID angegeben.</div>"
         set_game_color(uid, color)
         return "<div class='message success'>Farbe fuer Spiel gespeichert.</div>"
-
-    def _handle_set_tag_color(self, form):
-        uid = form.get("uid", [""])[0]
-        color = form.get("color", [""])[0]
-        if not uid:
-            return "<div class='message error'>Keine Tag-UID angegeben.</div>"
-
-        config = pico_link.load_config()
-        tcp_port = config.get("tcp_port", 5005)
-        pico_ip = _resolve_pico_ip(config)
-        if not pico_ip:
-            return "<div class='message error'>Pico wurde im Netzwerk nicht gefunden.</div>"
-
-        if pico_link.set_tag_color(pico_ip, tcp_port, uid, color):
-            return f"<div class='message success'>Farbe fuer Tag {_escape(uid)} gespeichert.</div>"
-        return f"<div class='message error'>Farbe fuer Tag {_escape(uid)} konnte nicht gespeichert werden (unbekannter Tag?).</div>"
 
     def _handle_forget_tag(self, form):
         config = pico_link.load_config()
@@ -1235,22 +1219,6 @@ class Handler(http.server.BaseHTTPRequestHandler):
             return {"ok": False, "message": "Keine Spiel-UID angegeben."}
         set_game_color(uid, color)
         return {"ok": True, "message": "Farbe fuer Spiel gespeichert."}
-
-    def _api_set_tag_color(self, data):
-        uid = data.get("uid", "")
-        color = data.get("color", "")
-        if not uid:
-            return {"ok": False, "message": "Keine Tag-UID angegeben."}
-
-        config = pico_link.load_config()
-        tcp_port = config.get("tcp_port", 5005)
-        pico_ip = _resolve_pico_ip(config)
-        if not pico_ip:
-            return {"ok": False, "message": "Pico wurde im Netzwerk nicht gefunden."}
-
-        if pico_link.set_tag_color(pico_ip, tcp_port, uid, color):
-            return {"ok": True, "message": f"Farbe fuer Tag {uid} gespeichert."}
-        return {"ok": False, "message": f"Farbe fuer Tag {uid} konnte nicht gespeichert werden (unbekannter Tag?)."}
 
     def _api_forget_tag(self, data):
         config = pico_link.load_config()

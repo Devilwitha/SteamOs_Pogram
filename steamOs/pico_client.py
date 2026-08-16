@@ -38,6 +38,7 @@ import colorsys
 import csv
 import math
 import os
+import re
 import shlex
 import shutil
 import signal
@@ -77,6 +78,26 @@ _download_pulse_active = False
 # check_game_still_active()) - None, wenn keins ueber RFID gestartet
 # wurde bzw. es bereits wieder beendet ist.
 _running_game = None
+
+# Von main() bei jedem Durchlauf aktualisiert (Ergebnis von
+# pico_link.fetch_current(), siehe dort) - dem Download-Puls-Thread
+# (_download_monitor_loop(), laeuft separat) zugaenglich, damit dieser
+# waehrend eines laufenden Spiels in dessen tatsaechlicher aktueller Farbe
+# pulsieren kann (siehe resolve_led_color()), statt in _last_led_color
+# nachzuschauen - das wuerde veraltet bleiben, weil update_led() waehrend
+# des Pulsierens bewusst nichts sendet/aktualisiert (siehe dort).
+_current_tag = None
+
+# Farbe eines gerade laufenden, installierten Spiels, per Prozess-Scan
+# erkannt (siehe _scan_for_process_color()) - unabhaengig von Tag/Pico,
+# damit die LED-Farbe auch OHNE Pico (oder ohne aufliegenden Tag) das
+# tatsaechlich laufende Spiel zeigt, sobald es z. B. direkt ueber Steam
+# Big Picture gestartet wurde. None, wenn kein bekanntes installiertes
+# Spiel gerade laeuft bzw. es keine eigene Farbe hat. Von main() bei jedem
+# Durchlauf aktualisiert (ein Scan pro Takt statt einem pro
+# resolve_led_color()-Aufruf, siehe dort - relevant, weil der
+# Download-Puls-Thread resolve_led_color() bis zu 10x/Sekunde aufruft).
+_process_detected_color = None
 
 
 def _resolve_steam_executable():
@@ -272,14 +293,169 @@ def _find_pids_under_install_path(install_path):
     return _find_pids_linux(target)
 
 
+def _fetch_installed_games():
+    """Alle installierten Spiele mit Farbe/install_path/appid - Grundlage
+    fuer _find_running_installed_game() unten. Eigene, schlanke Abfrage
+    statt find_game_by_uid() fuer jedes Spiel einzeln, da hier ohnehin die
+    ganze Liste gebraucht wird."""
+    if not GAMES_DB_PATH.is_file():
+        return []
+    conn = sqlite3.connect(GAMES_DB_PATH)
+    try:
+        game_scanner.ensure_db(conn)
+        conn.row_factory = sqlite3.Row
+        return conn.execute(
+            "SELECT uid, name, color, install_path, appid FROM games "
+            "WHERE installed = 1 AND install_path IS NOT NULL"
+        ).fetchall()
+    finally:
+        conn.close()
+
+
+# Steams eigener "reaper"-Prozess startet jedes ueber Steam gestartete
+# Spiel als "reaper SteamLaunch AppId=<id> -- ...") und bleibt fuer die
+# GESAMTE Spielsitzung am Leben (das ist sein einziger Zweck: das Spiel
+# ueberwachen und beim Beenden aufraeumen) - ein viel zuverlaessigeres
+# Signal als ein Abgleich gegen install_path (siehe
+# _scan_running_game_linux()).
+_APPID_RE = re.compile(r"AppId=(\d+)")
+
+
+def _scan_running_game_linux(games):
+    """EIN Durchlauf ueber /proc fuer ALLE installierten Spiele auf einmal
+    (statt _find_pids_linux() einzeln pro Spiel aufzurufen) - sonst waere
+    das bei z. B. 50 installierten Spielen 50 volle /proc-Durchlaeufe pro
+    Tick, viel zu teuer fuer periodisches Polling. Liefert das erste
+    passende Spiel (sqlite3.Row) oder None.
+
+    Bevorzugt den reaper/AppId-Abgleich (siehe _APPID_RE) vor dem
+    install_path-Abgleich: Bei per Proton gestarteten Spielen laeuft der
+    eigentliche Spielprozess innerhalb des Wine-Prefix unter einem
+    virtuellen Windows-Laufwerksbuchstaben (z. B. "S:\\steamapps\\...")
+    statt dem echten Linux-Pfad - ein install_path-Abgleich faende dort
+    nur die Proton/Wine-Bootstrap-Zwischenprozesse, die nach dem
+    Spielstart wieder verschwinden, waehrend das Spiel selbst
+    weiterlaeuft (beobachtet: LED sprang nach kurzer Zeit faelschlich auf
+    die Leerlauf-Farbe, siehe Chatverlauf). reaper bleibt dagegen
+    zuverlaessig fuer die komplette Sitzung bestehen."""
+    proc_dir = Path("/proc")
+    if not proc_dir.is_dir():
+        return None
+
+    by_appid = {str(g["appid"]): g for g in games if g["appid"]}
+    targets = []
+    for game in games:
+        try:
+            targets.append((game, str(Path(game["install_path"]).resolve())))
+        except OSError:
+            continue
+    if not by_appid and not targets:
+        return None
+
+    path_match = None
+    for entry in proc_dir.iterdir():
+        if not entry.name.isdigit():
+            continue
+        try:
+            cmdline = (entry / "cmdline").read_bytes().replace(b"\x00", b" ").decode(errors="ignore")
+        except OSError:
+            cmdline = ""
+
+        if cmdline and by_appid:
+            match = _APPID_RE.search(cmdline)
+            if match and match.group(1) in by_appid:
+                return by_appid[match.group(1)]
+
+        if path_match is None:
+            try:
+                exe = str((entry / "exe").resolve())
+            except OSError:
+                exe = ""
+            for game, target in targets:
+                if (exe and exe.startswith(target)) or (cmdline and target in cmdline):
+                    path_match = game
+                    break
+
+    return path_match
+
+
+def _scan_running_game_windows(games):
+    """Windows-Pendant zu _scan_running_game_linux() - EIN tasklist-Aufruf
+    fuer alle Spiele statt einem pro Spiel (siehe dort fuer den Grund)."""
+    try:
+        result = subprocess.run(
+            ["tasklist", "/fo", "csv", "/nh"],
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+
+    running_names = {row[0].lower() for row in csv.reader(result.stdout.splitlines()) if row}
+    for game in games:
+        if _candidate_exe_names(game["install_path"]) & running_names:
+            return game
+    return None
+
+
+def _find_running_installed_game(games):
+    if sys.platform == "win32":
+        return _scan_running_game_windows(games)
+    return _scan_running_game_linux(games)
+
+
+def _scan_for_process_color():
+    """Fuellt _process_detected_color (siehe dort) - fuer main(), einmal
+    pro Takt aufgerufen."""
+    game = _find_running_installed_game(_fetch_installed_games())
+    if game is not None and game["color"]:
+        return game["color"]
+    return None
+
+
+def _find_reaper_pid(appid):
+    """Sucht Steams eigenen "reaper"-Prozess fuer appid (derselbe
+    AppId=<id>-Abgleich wie in _scan_running_game_linux(), siehe dort fuer
+    den Hintergrund) - SIGTERM an reaper beendet zuverlaessig auch das von
+    ihm ueberwachte Spiel selbst (das ist reapers Zweck: das Spiel starten,
+    ueberwachen und bei einem eigenen Beenden-Signal sauber mit beenden),
+    selbst wenn der eigentliche Spielprozess sich (z. B. unter Proton mit
+    einem virtuellen Windows-Laufwerksbuchstaben statt echtem Linux-Pfad)
+    nicht ueber install_path finden liesse - siehe stop_game()."""
+    if sys.platform == "win32" or not appid:
+        return None
+    proc_dir = Path("/proc")
+    if not proc_dir.is_dir():
+        return None
+    target = f"AppId={appid}"
+    for entry in proc_dir.iterdir():
+        if not entry.name.isdigit():
+            continue
+        try:
+            cmdline = (entry / "cmdline").read_bytes().replace(b"\x00", b" ").decode(errors="ignore")
+        except OSError:
+            continue
+        if target in cmdline:
+            return int(entry.name)
+    return None
+
+
 def stop_game(game, proc):
     """Beendet ein per Tag gestartetes Spiel. Siehe
     _find_pids_under_install_path() dazu, warum proc.terminate() allein
-    bei ueber Steam gestarteten Spielen meist nicht reicht. Gibt True
-    zurueck, wenn mindestens ein Prozess ein Beenden-Signal erhalten hat
-    (keine Garantie, dass er sich auch tatsaechlich beendet)."""
+    bei ueber Steam gestarteten Spielen meist nicht reicht - zusaetzlich
+    wird (falls gefunden) reapers PID mitbeendet (siehe _find_reaper_pid()),
+    da install_path bei Proton-Spielen nur die Bootstrap-Zwischenprozesse
+    findet, nicht den eigentlichen (unter einem virtuellen Windows-Pfad
+    laufenden) Spielprozess. Gibt True zurueck, wenn mindestens ein Prozess
+    ein Beenden-Signal erhalten hat (keine Garantie, dass er sich auch
+    tatsaechlich beendet)."""
     pids = _find_pids_under_install_path(game["install_path"])
-    print(f"Beende '{game['name']}': gefundene Prozesse unter install_path: {pids or 'keine'}", flush=True)
+    reaper_pid = _find_reaper_pid(game["appid"])
+    if reaper_pid is not None and reaper_pid not in pids:
+        pids.append(reaper_pid)
+    print(f"Beende '{game['name']}': gefundene Prozesse: {pids or 'keine'}", flush=True)
 
     stopped = False
     for pid in pids:
@@ -379,22 +555,39 @@ def check_game_still_active(current):
 _LED_DISABLED = "disabled"
 
 
-def resolve_led_color(current):
-    """Ermittelt die fuer Led_Pico/Corsair-LEDs anzuzeigende Farbe aus dem
-    aktuellen Tag-Status (siehe pico_link.fetch_current): eine direkt am
-    Tag gesetzte Farbe hat Vorrang vor der Farbe des verknuepften Spiels.
-    Liegt kein Tag auf bzw. haben weder Tag noch Spiel eine eigene Farbe,
-    wird die in led_settings.json konfigurierte Leerlauf-Farbe (Standard
-    Weiss, siehe led_settings.py) zurueckgegeben."""
+def _resolve_active_color(current):
+    """Wie resolve_led_color() unten, aber OHNE Leerlauf-Fallback - liefert
+    None, wenn weder Tag/Spiel (current) noch ein per Prozess-Scan
+    erkanntes laufendes Spiel (_process_detected_color, siehe dort) eine
+    eigene Farbe haben. Eigene Funktion, damit Aufrufer (siehe
+    _download_monitor_loop()) zwischen "wirklich kein Spiel aktiv" und
+    "aktiv, aber zufaellig in Leerlauf-Farbe" unterscheiden koennen.
+
+    Bewusst NUR die Farbe des verknuepften Spiels, keine eigene Tag-Farbe
+    mehr (fruehers TAGCOLOR-Protokoll/current.get('color') wird hier
+    absichtlich nicht mehr gelesen) - genau eine Farbe pro Spiel statt
+    zweier separater, potenziell widerspruechlicher Farben (Tag vs.
+    Spiel). Die GUIs setzen dementsprechend auch keine Tag-Farbe mehr,
+    siehe gui_server.py/dashboard.html/native_console.py."""
     if current:
-        if current.get("color"):
-            return current["color"]
         game_uid = current.get("game_uid")
         if game_uid:
             game = find_game_by_uid(game_uid)
             if game is not None and game["color"]:
                 return game["color"]
-    return led_settings.get_idle_color()
+    return _process_detected_color
+
+
+def resolve_led_color(current):
+    """Ermittelt die fuer Led_Pico/Corsair-LEDs anzuzeigende Farbe: die
+    Farbe des per Tag verknuepften Spiels (siehe pico_link.fetch_current),
+    sonst die Farbe eines per Prozess-Scan erkannten laufenden Spiels
+    (siehe _scan_for_process_color() - funktioniert dadurch auch ganz ohne
+    Pico bzw. ohne aufliegenden Tag, z. B. bei einem direkt ueber Steam
+    Big Picture gestarteten Spiel). Ohne Treffer wird die in
+    led_settings.json konfigurierte Leerlauf-Farbe (Standard Weiss)
+    zurueckgegeben."""
+    return _resolve_active_color(current) or led_settings.get_idle_color()
 
 
 def update_led(current):
@@ -740,10 +933,17 @@ def _download_monitor_loop():
         progress = _smoothed_download_progress(_appid, progress, cached_active)
         _download_pulse_active = True
 
-        if _running_game is not None:
-            base_color = _last_led_color
-            if base_color in (None, _UNSET, _LED_DISABLED):
-                base_color = led_settings.get_idle_color()
+        active_color = _resolve_active_color(_current_tag)
+        if active_color is not None:
+            # Bewusst ueber _resolve_active_color(_current_tag) statt
+            # _last_led_color: Letzteres wird waehrend des Pulsierens NICHT
+            # mehr aktualisiert (update_led() kehrt dann sofort um, siehe
+            # dort) - ein laufendes Spiel (per Tag ODER per Prozess-Scan
+            # erkannt, siehe _process_detected_color) wuerde sonst in der
+            # zuletzt VOR dem Download-Start gezeigten (u.U. laengst
+            # veralteten, z. B. noch der Leerlauf-)Farbe gepulst, statt in
+            # der tatsaechlichen Tag-/Spielfarbe.
+            base_color = active_color
         elif led_settings.is_download_gradient_enabled():
             base_color = _download_gradient_color(progress)
         else:
@@ -857,6 +1057,9 @@ def main():
             print(f"[{time.strftime('%H:%M:%S')}] Pico nicht gefunden", flush=True)
             pico_link.write_state("nicht_gefunden", None)
 
+        global _current_tag, _process_detected_color
+        _current_tag = current
+        _process_detected_color = _scan_for_process_color()
         update_led(current)
         time.sleep(interval)
 

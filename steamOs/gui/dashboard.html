@@ -449,10 +449,14 @@ function tagsRows() {
     return [infoRow('Noch keine Tags erkannt. Einen Tag an den RC522 halten.')];
   }
   const gameNames = Object.fromEntries(state.games.map(g => [g.uid, g.name]));
+  const gameColors = Object.fromEntries(state.games.map(g => [g.uid, g.color]));
   return state.tags.map(t => ({
     type: 'list-item',
     label: shortUid(t.uid),
-    color: () => t.color || '#7686a0',
+    // Kein eigenes Tag-Farbfeld mehr (genau eine Farbe pro Spiel statt
+    // zwei potenziell widerspruechlichen) - der Farbklecks zeigt deshalb
+    // die Farbe des verknuepften Spiels, falls vorhanden.
+    color: () => (t.game_uid && gameColors[t.game_uid]) || '#7686a0',
     subtext: () => (t.game_uid ? '→ ' + (gameNames[t.game_uid] || t.game_uid) : 'nicht verknüpft'),
     onActivate: () => openTagActions(t),
   }));
@@ -465,7 +469,6 @@ function openTagActions(tag) {
   if (tag.game_uid) {
     items.push(buttonRow('Trennen', () => api('/api/unlink_tag', { uid: tag.uid })));
   }
-  items.push(colorRow('Farbe', tag.color, c => api('/api/set_tag_color', { uid: tag.uid, color: c })));
   items.push(buttonRow('Löschen...', async () => {
     const r = await api('/api/forget_tag', {});
     closeSubmenu();
@@ -478,11 +481,18 @@ function openTagActions(tag) {
 }
 
 function openGamePicker(tag) {
-  if (!state.games.length) {
-    openSubmenu('Verknüpfen: ' + shortUid(tag.uid), [infoRow('Keine Spiele in der Datenbank.')]);
+  // Spiele, die bereits an einen ANDEREN Tag verknuepft sind, werden aus
+  // der Auswahl ausgeblendet (siehe tagsRows()) - ein Spiel soll nicht
+  // versehentlich an mehrere Tags gleichzeitig haengen.
+  const linkedElsewhere = new Set(
+    state.tags.filter(t => t.game_uid && t.uid !== tag.uid).map(t => t.game_uid),
+  );
+  const pickable = state.games.filter(g => !linkedElsewhere.has(g.uid));
+  if (!pickable.length) {
+    openSubmenu('Verknüpfen: ' + shortUid(tag.uid), [infoRow('Keine verfügbaren Spiele (alle bereits verknüpft).')]);
     return;
   }
-  const items = state.games.map(g => buttonRow(g.name, async () => {
+  const items = pickable.map(g => buttonRow(g.name, async () => {
     const r = await api('/api/link_tag', { uid: tag.uid, game_uid: g.uid });
     closeSubmenu(); // Auswahlliste
     closeSubmenu(); // Tag-Aktionsmenue - zurueck zur Tag-Liste
