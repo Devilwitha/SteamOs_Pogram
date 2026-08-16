@@ -117,6 +117,67 @@ input[type=file]{
 .success{border-color:var(--green);color:var(--green)}
 .error{border-color:var(--red);color:var(--red)}
 .hint{color:var(--dim);font-size:.82em;line-height:1.6;margin-top:10px}
+
+button.switch{
+  position:relative;display:inline-flex;align-items:center;gap:0;
+  width:56px;height:30px;padding:0;border-radius:15px;
+  clip-path:none;color:transparent;border:1px solid var(--border);
+  background:#181e29;box-shadow:none;flex:none;
+}
+button.switch::before{
+  content:"";position:absolute;left:3px;top:3px;
+  width:22px;height:22px;border-radius:50%;
+  background:linear-gradient(180deg,#c9d3e2,#8d99b3);
+  box-shadow:0 1px 3px rgba(0,0,0,.5);
+  transition:left .16s ease,background .16s ease;
+}
+button.switch.on{
+  border-color:var(--green);
+  background:linear-gradient(180deg,rgba(57,255,140,.35),rgba(26,156,86,.35));
+  box-shadow:0 0 12px rgba(57,255,140,.3);
+}
+button.switch.on::before{left:29px;background:linear-gradient(180deg,#eafff3,var(--green))}
+button.switch:hover{transform:none;box-shadow:0 0 10px rgba(0,229,255,.25)}
+button.switch.on:hover{box-shadow:0 0 14px rgba(57,255,140,.5)}
+
+.led-panel{display:flex;flex-direction:column;gap:16px}
+.led-group{
+  background:rgba(255,255,255,.025);border:1px solid var(--border);
+  border-radius:3px;padding:14px 16px;
+}
+.led-group-title{
+  font-size:.68rem;letter-spacing:.14em;text-transform:uppercase;
+  color:var(--dim);margin:0 0 12px;font-weight:700;
+  display:flex;align-items:center;gap:8px;
+}
+.led-group-title .swatch-dot{width:8px;height:8px;border-radius:50%;background:var(--magenta);box-shadow:0 0 6px var(--magenta)}
+.led-row{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:12px}
+.led-row:last-child{margin-bottom:0}
+.led-row-label{font-size:.86rem;color:var(--text);flex:1;min-width:220px}
+.led-row-label small{display:block;color:var(--dim);font-size:.82em;font-weight:400;margin-top:2px}
+.color-field{display:flex;align-items:center;gap:8px}
+.color-field input[type=color]{width:46px;height:36px;border-radius:6px}
+.color-field .hex{color:var(--dim);font-size:.78em;font-family:Consolas,ui-monospace,monospace;min-width:62px}
+.gradient-preview{
+  position:relative;
+  height:16px;border-radius:8px;flex:1;min-width:140px;max-width:280px;
+  border:1px solid var(--border);box-shadow:inset 0 0 6px rgba(0,0,0,.4);
+}
+.gradient-marker{
+  position:absolute;top:-6px;bottom:-6px;width:2px;
+  background:#fff;box-shadow:0 0 6px rgba(255,255,255,.9),0 0 2px #000;
+  transform:translateX(-1px);pointer-events:none;
+}
+.gradient-marker::after{
+  content:"";position:absolute;top:-5px;left:50%;transform:translateX(-50%);
+  border-left:5px solid transparent;border-right:5px solid transparent;
+  border-top:6px solid #fff;
+}
+.gradient-marker-label{
+  position:absolute;top:-25px;left:50%;transform:translateX(-50%);
+  font-size:.68rem;font-weight:700;color:#fff;white-space:nowrap;
+  background:rgba(0,0,0,.6);padding:2px 6px;border-radius:3px;
+}
 </style>
 </head>
 <body>
@@ -194,7 +255,32 @@ legt fest, welche Farbe angezeigt wird, wenn kein Tag aufliegt bzw. weder Tag no
 Spiel eine eigene Farbe haben ("Konsole an" - Standard Weiss) - sobald ein Tag mit Farbe aufliegt,
 hat dessen Farbe wie gewohnt Vorrang. "Blinken bei Sleep/Shutdown": laesst die LEDs kurz in der
 zuletzt gezeigten Farbe blinken, sobald der PC in den Standby geht oder heruntergefahren wird -
-unabhaengig vom Hauptschalter separat umschaltbar.</p>
+unabhaengig vom Hauptschalter separat umschaltbar. "Download-Pulsieren": laesst die LEDs sanft
+pulsieren, waehrend Steam gerade etwas herunterlaedt/aktualisiert - laeuft ein Spiel per Tag,
+wird immer in dessen Farbe gepulst. Im Leerlauf (kein Tag aufliegend) entscheidet
+"Download-Farbverlauf": "An" pulsiert zwischen den Feldern "Download bei 0%"/"Download bei 100%"
+(Standard Rot -&gt; Gelb bei 50% -&gt; Gruen) je nach Downloadfortschritt, "Aus" pulsiert stattdessen
+in der normalen Leerlauf-Farbe ohne Farbwechsel. Springt danach automatisch zurueck auf die
+normale statische Anzeige.</p>
 </div>
+
+<script>
+function updateDownloadMarker() {
+  fetch("/api/state").then(r => r.json()).then(state => {
+    const marker = document.getElementById("gradient-marker");
+    const label = document.getElementById("gradient-marker-label");
+    if (!marker) return;
+    if (state.download_active && state.download_progress !== null && state.download_progress !== undefined) {
+      const pct = Math.max(0, Math.min(100, state.download_progress * 100));
+      marker.style.left = pct + "%";
+      marker.style.display = "";
+      label.textContent = Math.round(pct) + "%" + (state.download_name ? " · " + state.download_name : "");
+    } else {
+      marker.style.display = "none";
+    }
+  }).catch(() => {});
+}
+setInterval(updateDownloadMarker, 5000);
+</script>
 </body>
 </html>
