@@ -27,6 +27,7 @@ Aufruf:  python3 gui_server.py
 Danach im Browser (Desktop-Modus) http://localhost:8080 oeffnen - wird
 normalerweise automatisch geoeffnet.
 """
+import colorsys
 import http.server
 import json
 import re
@@ -43,7 +44,9 @@ sys.path.insert(0, str(STEAMOS_DIR))
 
 import audio_config  # noqa: E402
 import audio_player  # noqa: E402
+import download_monitor  # noqa: E402
 import game_scanner  # noqa: E402
+import led_settings  # noqa: E402
 import pico_link  # noqa: E402
 import video_player  # noqa: E402
 
@@ -542,6 +545,152 @@ def _render_audio_mode_panel():
     )
 
 
+def _download_status():
+    """Aktueller Download-Fortschritt (siehe download_monitor.py) fuer den
+    Fortschritts-Zeiger auf dem Farbverlauf-Balken in
+    _render_led_settings_panel() sowie fuer /api/state (von dort periodisch
+    per JS abgefragt, siehe index.html/control.html) - liefert zusaetzlich
+    den Spielnamen (ueber die appid in games.db aufgeloest), falls
+    bekannt. Bewusst unabhaengig vom Glaettungszustand in
+    pico_client._smoothed_download_progress() (laeuft in einem anderen
+    Prozess/Service) - der Zeiger zeigt daher den rohen, nicht
+    interpolierten Wert, was fuer eine Positionsanzeige ausreicht."""
+    info = download_monitor.get_download_progress()
+    if info is None:
+        return {"active": False, "progress": None, "appid": None, "name": None}
+
+    appid, progress = info
+    name = None
+    if DB_PATH.is_file():
+        conn = sqlite3.connect(DB_PATH)
+        try:
+            row = conn.execute("SELECT name FROM games WHERE appid = ?", (appid,)).fetchone()
+            if row:
+                name = row[0]
+        finally:
+            conn.close()
+
+    return {"active": True, "progress": progress, "appid": appid, "name": name}
+
+
+def _gradient_preview_css(start, end, steps=10):
+    """CSS linear-gradient() fuer die Vorschau des Download-Farbverlaufs -
+    interpoliert bewusst in denselben HSV-Einzelschritten wie
+    pico_client._download_gradient_color(), damit die Vorschau exakt zeigt,
+    was tatsaechlich auf den LEDs zu sehen sein wird (eine direkte
+    RGB-Interpolation wuerde bei Rot->Gruen faelschlich blasses Oliv statt
+    Gelb bei 50% zeigen)."""
+    h1, s1, v1 = colorsys.rgb_to_hsv(int(start[1:3], 16) / 255, int(start[3:5], 16) / 255, int(start[5:7], 16) / 255)
+    h2, s2, v2 = colorsys.rgb_to_hsv(int(end[1:3], 16) / 255, int(end[3:5], 16) / 255, int(end[5:7], 16) / 255)
+    stops = []
+    for i in range(steps + 1):
+        t = i / steps
+        h = h1 + (h2 - h1) * t
+        s = s1 + (s2 - s1) * t
+        v = v1 + (v2 - v1) * t
+        r, g, b = colorsys.hsv_to_rgb(h, s, v)
+        stops.append(f"#{round(r * 255):02x}{round(g * 255):02x}{round(b * 255):02x} {round(t * 100)}%")
+    return f"linear-gradient(90deg, {', '.join(stops)})"
+
+
+def _render_led_settings_panel():
+    """Eigener Abschnitt fuer die allgemeinen LED-Einstellungen (siehe
+    led_settings.py): Hauptschalter fuer die gesamte LED-Synchronisation
+    (Led_Pico + lokale USB-RGB-Geraete ueber OpenRGB, siehe
+    pico_client.update_led()), die Leerlauf-Farbe ("Konsole an" -
+    angezeigt, wenn kein Tag aufliegt bzw. weder Tag noch Spiel eine eigene
+    Farbe haben), der Schalter fuer das Sleep/Shutdown-Blinken (siehe
+    pico_client._start_sleep_shutdown_listener()), der Schalter fuer das
+    Download-Pulsieren sowie dessen Start-/Endfarbe (siehe
+    pico_client._download_monitor_loop()/_download_gradient_color()).
+    Gleiches Umschalt-Button-Muster wie beim Sound-Aktiv/Inaktiv-Umschalter
+    in _render_game_rows()."""
+    settings = led_settings.load_config()
+    enabled = bool(settings.get("enabled", True))
+    idle_color = settings.get("idle_color") or "#ffffff"
+    blink_on_sleep = bool(settings.get("blink_on_sleep", True))
+    download_pulse = bool(settings.get("download_pulse", True))
+    gradient_start = settings.get("download_gradient_start") or "#ff0000"
+    gradient_end = settings.get("download_gradient_end") or "#00ff00"
+    gradient_enabled = bool(settings.get("download_gradient_enabled", True))
+
+    def _switch(action, field, current, title):
+        cls = "switch on" if current else "switch off"
+        return (
+            f"<form method='POST' action='{action}' class='inline-form'>"
+            f"<input type='hidden' name='{field}' value='{'0' if current else '1'}'>"
+            f"<button type='submit' class='{cls}' title='{title}'></button>"
+            "</form>"
+        )
+
+    gradient_css = _gradient_preview_css(gradient_start, gradient_end)
+    download = _download_status()
+    if download["active"] and download["progress"] is not None:
+        marker_pct = max(0.0, min(1.0, download["progress"])) * 100
+        marker_style = f"left:{marker_pct:.1f}%"
+        marker_label = f"{marker_pct:.0f}%"
+        if download["name"]:
+            marker_label += f" &middot; {_escape(download['name'])}"
+    else:
+        marker_style = "display:none"
+        marker_label = ""
+
+    return (
+        "<div class='led-panel'>"
+
+        "<div class='led-group'>"
+        "<p class='led-group-title'><span class='swatch-dot'></span>Allgemein</p>"
+        "<div class='led-row'>"
+        "<div class='led-row-label'>LED-Synchronisation<small>Led_Pico + lokale USB-RGB-Geraete (OpenRGB) gemeinsam</small></div>"
+        + _switch("/set_led_enabled", "enabled", enabled, "Schaltet Led_Pico und lokale USB-RGB-LEDs gemeinsam ein/aus")
+        + "</div>"
+        "<div class='led-row'>"
+        "<div class='led-row-label'>Leerlauf-Farbe (&quot;Konsole an&quot;)<small>Angezeigt, wenn kein Tag/Spiel eine eigene Farbe hat</small></div>"
+        "<form method='POST' action='/set_idle_led_color' class='color-field'>"
+        f"<input type='color' name='color' value='{idle_color}' onchange='this.form.submit()'>"
+        f"<span class='hex'>{idle_color}</span>"
+        "</form>"
+        "</div>"
+        "</div>"
+
+        "<div class='led-group'>"
+        "<p class='led-group-title'><span class='swatch-dot'></span>Sleep &amp; Shutdown</p>"
+        "<div class='led-row'>"
+        "<div class='led-row-label'>Blinken beim Einschlafen/Herunterfahren<small>Kurzes Blinken in der zuletzt gezeigten Farbe</small></div>"
+        + _switch("/set_blink_on_sleep", "enabled", blink_on_sleep, "LEDs kurz blinken lassen, sobald der PC in den Standby geht oder herunterfaehrt")
+        + "</div>"
+        "</div>"
+
+        "<div class='led-group'>"
+        "<p class='led-group-title'><span class='swatch-dot'></span>Download-Anzeige</p>"
+        "<div class='led-row'>"
+        "<div class='led-row-label'>Download-Pulsieren<small>Sanftes Pulsieren waehrend Steam etwas laedt/aktualisiert</small></div>"
+        + _switch("/set_download_pulse", "enabled", download_pulse, "LEDs waehrend eines laufenden Steam-Downloads sanft pulsieren lassen")
+        + "</div>"
+        "<div class='led-row'>"
+        "<div class='led-row-label'>Farbverlauf im Leerlauf<small>An: Rot-Gelb-Gruen je Fortschritt &middot; Aus: normale Leerlauf-Farbe. Mit Tag wird immer in dessen Spielfarbe gepulst.</small></div>"
+        + _switch("/set_download_gradient_enabled", "enabled", gradient_enabled, "Steuert nur den Leerlauf-Fall: An = Rot-Gelb-Gruen-Verlauf je Downloadfortschritt, Aus = stattdessen in der normalen Leerlauf-Farbe pulsieren")
+        + "</div>"
+        "<div class='led-row'>"
+        "<div class='led-row-label'>Verlauffarben<small>Bei 0% / bei 100% Downloadfortschritt</small></div>"
+        "<form method='POST' action='/set_download_gradient_start' class='color-field'>"
+        f"<input type='color' name='color' value='{gradient_start}' onchange='this.form.submit()'>"
+        "</form>"
+        "<form method='POST' action='/set_download_gradient_end' class='color-field'>"
+        f"<input type='color' name='color' value='{gradient_end}' onchange='this.form.submit()'>"
+        "</form>"
+        f"<div class='gradient-preview' style='background:{gradient_css}'>"
+        f"<div class='gradient-marker' id='gradient-marker' style='{marker_style}'>"
+        f"<span class='gradient-marker-label' id='gradient-marker-label'>{marker_label}</span>"
+        "</div>"
+        "</div>"
+        "</div>"
+        "</div>"
+
+        "</div>"
+    )
+
+
 def render_page(message_html=""):
     games = fetch_games()
     show_audio = audio_config.get_mode() == audio_config.MODE_SONGS
@@ -553,6 +702,7 @@ def render_page(message_html=""):
 
     page = PAGE_TEMPLATE.replace("__MESSAGE__", message_html)
     page = page.replace("__AUDIO_MODE_PANEL__", _render_audio_mode_panel())
+    page = page.replace("__LED_SETTINGS_PANEL__", _render_led_settings_panel())
     page = page.replace("__SOUND_TH__", "<th>Sound</th>" if show_audio else "")
     page = page.replace("__ROWS__", _render_game_rows(games, show_audio))
     page = page.replace("__TAG_ROWS__", _render_tag_rows(tags, games))
@@ -595,6 +745,14 @@ def _state_payload():
         "boot_sound_name": Path(boot_sound_path).name if boot_sound_path else None,
         "has_video": bool(video_path),
         "video_name": Path(video_path).name if video_path else None,
+        "led_enabled": led_settings.is_enabled(),
+        "idle_led_color": led_settings.get_idle_color(),
+        "blink_on_sleep": led_settings.is_blink_on_sleep_enabled(),
+        "download_pulse": led_settings.is_download_pulse_enabled(),
+        "download_gradient_start": led_settings.get_download_gradient_start(),
+        "download_gradient_end": led_settings.get_download_gradient_end(),
+        "download_gradient_enabled": led_settings.is_download_gradient_enabled(),
+        **{f"download_{k}": v for k, v in _download_status().items()},
     }
 
 
@@ -624,6 +782,14 @@ API_ROUTES = {
     "/api/remove_video": "_api_remove_video",
     "/api/play_video": "_api_play_video",
     "/api/stop_video": "_api_stop_video",
+    "/api/set_led_enabled": "_api_set_led_enabled",
+    "/api/set_idle_led_color": "_api_set_idle_led_color",
+    "/api/set_blink_on_sleep": "_api_set_blink_on_sleep",
+    "/api/set_download_pulse": "_api_set_download_pulse",
+    "/api/set_download_gradient_start": "_api_set_download_gradient_start",
+    "/api/set_download_gradient_end": "_api_set_download_gradient_end",
+    "/api/set_download_gradient_enabled": "_api_set_download_gradient_enabled",
+    "/api/reset_all_colors": "_api_reset_all_colors",
 }
 
 
@@ -735,6 +901,14 @@ class Handler(http.server.BaseHTTPRequestHandler):
             "/remove_video": self._handle_remove_video,
             "/play_video": self._handle_play_video,
             "/stop_video": self._handle_stop_video,
+            "/set_led_enabled": self._handle_set_led_enabled,
+            "/set_idle_led_color": self._handle_set_idle_led_color,
+            "/set_blink_on_sleep": self._handle_set_blink_on_sleep,
+            "/set_download_pulse": self._handle_set_download_pulse,
+            "/set_download_gradient_start": self._handle_set_download_gradient_start,
+            "/set_download_gradient_end": self._handle_set_download_gradient_end,
+            "/set_download_gradient_enabled": self._handle_set_download_gradient_enabled,
+            "/reset_all_colors": self._handle_reset_all_colors,
         }
         handler = routes.get(self.path)
         if handler is None:
@@ -924,6 +1098,49 @@ class Handler(http.server.BaseHTTPRequestHandler):
     def _handle_stop_video(self, form):
         video_player.stop()
         return "<div class='message success'>Wiedergabe gestoppt.</div>"
+
+    def _handle_set_led_enabled(self, form):
+        enabled = form.get("enabled", ["1"])[0] == "1"
+        led_settings.set_enabled(enabled)
+        zustand = "aktiviert" if enabled else "deaktiviert"
+        return f"<div class='message success'>LEDs {zustand}.</div>"
+
+    def _handle_set_idle_led_color(self, form):
+        color = form.get("color", ["#ffffff"])[0]
+        led_settings.set_idle_color(color)
+        return "<div class='message success'>Leerlauf-Farbe gespeichert.</div>"
+
+    def _handle_set_blink_on_sleep(self, form):
+        enabled = form.get("enabled", ["1"])[0] == "1"
+        led_settings.set_blink_on_sleep_enabled(enabled)
+        zustand = "aktiviert" if enabled else "deaktiviert"
+        return f"<div class='message success'>Blinken bei Sleep/Shutdown {zustand}.</div>"
+
+    def _handle_set_download_pulse(self, form):
+        enabled = form.get("enabled", ["1"])[0] == "1"
+        led_settings.set_download_pulse_enabled(enabled)
+        zustand = "aktiviert" if enabled else "deaktiviert"
+        return f"<div class='message success'>Download-Pulsieren {zustand}.</div>"
+
+    def _handle_set_download_gradient_start(self, form):
+        color = form.get("color", ["#ff0000"])[0]
+        led_settings.set_download_gradient_start(color)
+        return "<div class='message success'>Download-Farbe bei 0% gespeichert.</div>"
+
+    def _handle_set_download_gradient_end(self, form):
+        color = form.get("color", ["#00ff00"])[0]
+        led_settings.set_download_gradient_end(color)
+        return "<div class='message success'>Download-Farbe bei 100% gespeichert.</div>"
+
+    def _handle_set_download_gradient_enabled(self, form):
+        enabled = form.get("enabled", ["1"])[0] == "1"
+        led_settings.set_download_gradient_enabled(enabled)
+        zustand = "aktiviert" if enabled else "deaktiviert"
+        return f"<div class='message success'>Download-Farbverlauf {zustand}.</div>"
+
+    def _handle_reset_all_colors(self, form):
+        count = game_scanner.reset_all_colors()
+        return f"<div class='message success'>Farben von {count} Spiel(en) auf ihre Cover-Durchschnittsfarbe zurueckgesetzt.</div>"
 
     def _link(self, uid, game_uid, aktion, name=None):
         config = pico_link.load_config()
@@ -1116,6 +1333,49 @@ class Handler(http.server.BaseHTTPRequestHandler):
     def _api_stop_video(self, data):
         video_player.stop()
         return {"ok": True, "message": "Wiedergabe gestoppt."}
+
+    def _api_set_led_enabled(self, data):
+        enabled = bool(data.get("enabled"))
+        led_settings.set_enabled(enabled)
+        zustand = "aktiviert" if enabled else "deaktiviert"
+        return {"ok": True, "message": f"LEDs {zustand}."}
+
+    def _api_set_idle_led_color(self, data):
+        color = data.get("color", "#ffffff")
+        led_settings.set_idle_color(color)
+        return {"ok": True, "message": "Leerlauf-Farbe gespeichert."}
+
+    def _api_set_blink_on_sleep(self, data):
+        enabled = bool(data.get("enabled"))
+        led_settings.set_blink_on_sleep_enabled(enabled)
+        zustand = "aktiviert" if enabled else "deaktiviert"
+        return {"ok": True, "message": f"Blinken bei Sleep/Shutdown {zustand}."}
+
+    def _api_set_download_pulse(self, data):
+        enabled = bool(data.get("enabled"))
+        led_settings.set_download_pulse_enabled(enabled)
+        zustand = "aktiviert" if enabled else "deaktiviert"
+        return {"ok": True, "message": f"Download-Pulsieren {zustand}."}
+
+    def _api_set_download_gradient_start(self, data):
+        color = data.get("color", "#ff0000")
+        led_settings.set_download_gradient_start(color)
+        return {"ok": True, "message": "Download-Farbe bei 0% gespeichert."}
+
+    def _api_set_download_gradient_end(self, data):
+        color = data.get("color", "#00ff00")
+        led_settings.set_download_gradient_end(color)
+        return {"ok": True, "message": "Download-Farbe bei 100% gespeichert."}
+
+    def _api_set_download_gradient_enabled(self, data):
+        enabled = bool(data.get("enabled"))
+        led_settings.set_download_gradient_enabled(enabled)
+        zustand = "aktiviert" if enabled else "deaktiviert"
+        return {"ok": True, "message": f"Download-Farbverlauf {zustand}."}
+
+    def _api_reset_all_colors(self, data):
+        count = game_scanner.reset_all_colors()
+        return {"ok": True, "message": f"Farben von {count} Spiel(en) auf ihre Cover-Durchschnittsfarbe zurueckgesetzt."}
 
     def _respond(self, html):
         encoded = html.encode("utf-8")

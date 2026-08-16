@@ -24,24 +24,37 @@ das sich auch die GUI (gui/gui_server.py) teilt.
 
 Zusaetzlich wird bei jedem Durchlauf per update_led() die Farbe des
 gerade aufliegenden Tags (bzw. des damit verknuepften Spiels) ermittelt
-und an einen optionalen zweiten Pico weitergereicht (siehe ../Led_Pico),
-der damit einen LED-Streifen ansteuert - unabhaengig vom Spielstart,
-komplett eigenstaendiges Geraet (led_config.json/led_link.py).
+und weitergereicht an: einen optionalen zweiten Pico (siehe ../Led_Pico),
+der damit einen LED-Streifen ansteuert (led_config.json/led_link.py), und
+optional lokal per USB angeschlossene RGB-Geraete ueber OpenRGB - Standard
+sind Corsair-Geraete (siehe openrgb_config.json/openrgb_link.py,
+target_names) - beide unabhaengig vom Spielstart und voneinander,
+komplett eigenstaendig. Alle uebrigen von OpenRGB gemeldeten Geraete
+(Grafikkarte, Mainboard, Maus, ...) werden einmalig beim Start komplett
+ausgeschaltet (siehe main()/openrgb_link.turn_off_others()), statt mit
+eigenen Werkseffekten weiterzulaufen.
 """
+import colorsys
 import csv
+import math
 import os
 import shlex
+import shutil
 import signal
 import sqlite3
 import subprocess
 import sys
+import threading
 import time
 from pathlib import Path
 
 import audio_config
 import audio_player
+import download_monitor
 import game_scanner
 import led_link
+import led_settings
+import openrgb_link
 import pico_link
 import video_player
 
@@ -54,6 +67,12 @@ _UNSET = object()
 _last_led_color = _UNSET
 _led_pico_ip = None
 
+# Siehe _download_monitor_loop(): True, waehrend dieser Hintergrund-Thread
+# gerade wegen eines laufenden Steam-Downloads pulsiert - update_led() in
+# der Hauptschleife ueberspringt in dieser Zeit bewusst jedes eigene
+# Senden, um nicht gegen das Pulsieren anzusenden (siehe dort).
+_download_pulse_active = False
+
 # Per Tag gestartetes Spiel, das aktuell laeuft (siehe handle_tag()/
 # check_game_still_active()) - None, wenn keins ueber RFID gestartet
 # wurde bzw. es bereits wieder beendet ist.
@@ -61,21 +80,28 @@ _running_game = None
 
 
 def _resolve_steam_executable():
-    """Unter Windows steckt 'steam' anders als auf SteamOS/Linux i.d.R.
-    nicht im PATH - subprocess.Popen(['steam', ...]) faende die Datei
-    sonst nicht. Ermittelt den vollen Pfad zu steam.exe ueber die
-    Windows-Registry (HKCU\\Software\\Valve\\Steam -> SteamExe). Nur fuer
-    lokale Tests auf Windows relevant, auf SteamOS greift dieser Zweig
-    nicht (sys.platform != 'win32')."""
-    if sys.platform != "win32":
-        return None
-    try:
-        import winreg
-        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, r"Software\Valve\Steam") as key:
-            path, _ = winreg.QueryValueEx(key, "SteamExe")
-            return path if Path(path).is_file() else None
-    except OSError:
-        return None
+    """'steam' steckt nicht immer im PATH des Prozesses, der pico_client.py
+    startet (z.B. systemd-Service mit minimalem PATH, oder eine Shell ohne
+    vollstaendiges Profil) - subprocess.Popen(['steam', ...]) faende die
+    Datei dann nicht. Ermittelt daher den vollen Pfad: unter Windows ueber
+    die Registry (HKCU\\Software\\Valve\\Steam -> SteamExe), sonst per
+    shutil.which() bzw. den ueblichen SteamOS/Linux-Installationspfaden."""
+    if sys.platform == "win32":
+        try:
+            import winreg
+            with winreg.OpenKey(winreg.HKEY_CURRENT_USER, r"Software\Valve\Steam") as key:
+                path, _ = winreg.QueryValueEx(key, "SteamExe")
+                return path if Path(path).is_file() else None
+        except OSError:
+            return None
+
+    which = shutil.which("steam")
+    if which:
+        return which
+    for candidate in (Path.home() / ".local/share/Steam/steam.sh", Path("/usr/bin/steam")):
+        if candidate.is_file():
+            return str(candidate)
+    return None
 
 
 _STEAM_EXECUTABLE = _resolve_steam_executable()
@@ -347,33 +373,66 @@ def check_game_still_active(current):
     _running_game = None
 
 
+# Sentinel fuer update_led()/_last_led_color, wenn die LED-Synchronisation
+# per led_settings.is_enabled() abgeschaltet ist - kann nie mit einer
+# echten Farbe (immer "#......") kollidieren.
+_LED_DISABLED = "disabled"
+
+
 def resolve_led_color(current):
-    """Ermittelt die fuer den Led_Pico anzuzeigende Farbe aus dem
+    """Ermittelt die fuer Led_Pico/Corsair-LEDs anzuzeigende Farbe aus dem
     aktuellen Tag-Status (siehe pico_link.fetch_current): eine direkt am
     Tag gesetzte Farbe hat Vorrang vor der Farbe des verknuepften Spiels.
-    Gibt None zurueck, wenn kein Tag aufliegt bzw. weder Tag noch Spiel
-    eine Farbe haben (Streifen soll dann aus sein)."""
-    if not current:
-        return None
-    if current.get("color"):
-        return current["color"]
-    game_uid = current.get("game_uid")
-    if game_uid:
-        game = find_game_by_uid(game_uid)
-        if game is not None:
-            return game["color"]
-    return None
+    Liegt kein Tag auf bzw. haben weder Tag noch Spiel eine eigene Farbe,
+    wird die in led_settings.json konfigurierte Leerlauf-Farbe (Standard
+    Weiss, siehe led_settings.py) zurueckgegeben."""
+    if current:
+        if current.get("color"):
+            return current["color"]
+        game_uid = current.get("game_uid")
+        if game_uid:
+            game = find_game_by_uid(game_uid)
+            if game is not None and game["color"]:
+                return game["color"]
+    return led_settings.get_idle_color()
 
 
 def update_led(current):
-    """Haelt den Led_Pico auf dem Laufenden: ermittelt aus dem (von main()
-    bereits per CURRENT? abgefragten) aktuellen Tag-Status die passende
-    Farbe und schickt sie weiter - aber nur, wenn sie sich seit dem
-    letzten Durchlauf geaendert hat, um nicht bei jedem Takt unnoetig
-    Netzwerkverkehr zum Led_Pico zu erzeugen. Ist kein Led_Pico im Netzwerk
-    konfiguriert/erreichbar, wird das stillschweigend uebersprungen - er
-    ist optional."""
+    """Haelt sowohl den optionalen Led_Pico als auch optionale lokale
+    USB-RGB-Geraete ueber OpenRGB an (siehe openrgb_link.py - standardmaessig
+    Corsair-Geraete, siehe openrgb_config.json/target_names; alle uebrigen
+    OpenRGB-Geraete werden separat einmalig beim Start ausgeschaltet, siehe
+    main()): ermittelt aus dem (von main() bereits per CURRENT? abgefragten)
+    aktuellen Tag-Status die passende Farbe (siehe resolve_led_color(), im
+    Leerlauf die konfigurierte Leerlauf-Farbe statt aus) und schickt sie an
+    beide weiter - aber nur, wenn sie sich seit dem letzten Durchlauf
+    geaendert hat, um nicht bei jedem Takt unnoetig Netzwerk-/USB-Verkehr
+    zu erzeugen. Ist die LED-Synchronisation per led_settings.json
+    (Hauptschalter, siehe led_settings.py) deaktiviert, werden beide
+    stattdessen einmalig ausgeschaltet und dann in Ruhe gelassen, bis
+    wieder aktiviert. Led_Pico und OpenRGB-Geraete sind unabhaengig
+    voneinander optional: ist eins nicht konfiguriert/erreichbar, wird nur
+    dieses eine stillschweigend uebersprungen, ohne das andere zu
+    beeintraechtigen. Solange keins von beiden erreichbar war, wird beim
+    naechsten Durchlauf erneut versucht (kein dauerhaftes Aufgeben, falls
+    z. B. der Led_Pico oder der OpenRGB-Server erst spaeter online geht).
+    Pausiert komplett, waehrend _download_pulse_active gesetzt ist (siehe
+    _download_monitor_loop()) - der Puls-Thread hat dann die Kontrolle,
+    ein gleichzeitiges Senden hier wuerde nur dagegen ansenden."""
     global _last_led_color, _led_pico_ip
+
+    if _download_pulse_active:
+        return
+
+    if not led_settings.is_enabled():
+        if _last_led_color != _LED_DISABLED:
+            led_config = led_link.load_config()
+            led_ip = led_config.get("led_pico_ip") or _led_pico_ip or led_link.discover_led_pico(led_config.get("udp_port", 5008))
+            if led_ip:
+                led_link.turn_off(led_ip, led_config.get("tcp_port", 5007))
+            openrgb_link.turn_off()
+            _last_led_color = _LED_DISABLED
+        return
 
     color = resolve_led_color(current)
     if color == _last_led_color:
@@ -383,17 +442,323 @@ def update_led(current):
     led_tcp_port = led_config.get("tcp_port", 5007)
     led_udp_port = led_config.get("udp_port", 5008)
     led_ip = led_config.get("led_pico_ip") or _led_pico_ip or led_link.discover_led_pico(led_udp_port)
-    if not led_ip:
+    led_ok = False
+    if led_ip:
+        led_ok = led_link.set_color(led_ip, led_tcp_port, color)
+        if led_ok:
+            _led_pico_ip = led_ip
+        else:
+            # IP war offenbar nicht (mehr) erreichbar - naechstes Mal neu
+            # ermitteln statt dauerhaft gegen eine tote IP zu senden.
+            _led_pico_ip = None
+
+    openrgb_ok = openrgb_link.set_color(color)
+
+    if led_ok or openrgb_ok:
+        _last_led_color = color
+
+
+def reset_led_cache():
+    """Erzwingt beim naechsten update_led()-Aufruf ein erneutes Senden der
+    aktuellen Farbe, auch wenn sie sich softwareseitig nicht geaendert hat.
+    Fuer main(), nachdem ein Aufwachen aus dem Suspend erkannt wurde (siehe
+    dort): ein angeschlossenes Geraet (Led_Pico/USB-RGB) kann waehrend des
+    Suspends seinen Zustand verloren haben (z. B. Stromverlust am
+    USB-Port), obwohl pico_client.py selbst unveraendert von "Weiss"
+    ausgeht - ohne Cache-Reset wuerde update_led() das Senden faelschlich
+    uebersehen, weil sich die Farbe aus seiner Sicht nicht geaendert hat."""
+    global _last_led_color
+    _last_led_color = _UNSET
+
+
+def blink_leds(color, cycles=3, on_seconds=0.15, off_seconds=0.15):
+    """Laesst Led_Pico/OpenRGB kurz zwischen der angegebenen Farbe und Aus
+    hin- und herblinken - fuer das Sleep/Shutdown-Blinken (siehe
+    _start_sleep_shutdown_listener()). Bewusst kurz gehalten (Standard
+    < 1s insgesamt): systemd-logind gibt Programmen nur eine begrenzte Zeit
+    (siehe logind.conf, i. d. R. wenige Sekunden), bevor es mit dem
+    Schlafen/Herunterfahren fortfaehrt, auch wenn noch reagiert wird -
+    dieser Aufruf nimmt bewusst keinen eigenen Inhibitor-Lock (siehe
+    Docstring dort), das Blinken muss also von selbst schnell genug sein.
+    Ruft am Ende reset_led_cache() auf, damit die naechste normale
+    update_led()-Runde (z. B. nach einem abgebrochenen Suspend, oder nach
+    dem Aufwachen) die eigentliche Farbe zuverlaessig wiederherstellt."""
+    led_config = led_link.load_config()
+    led_tcp_port = led_config.get("tcp_port", 5007)
+    led_udp_port = led_config.get("udp_port", 5008)
+    led_ip = led_config.get("led_pico_ip") or _led_pico_ip or led_link.discover_led_pico(led_udp_port)
+
+    for _ in range(cycles):
+        if led_ip:
+            led_link.set_color(led_ip, led_tcp_port, color)
+        openrgb_link.set_color(color)
+        time.sleep(on_seconds)
+        if led_ip:
+            led_link.turn_off(led_ip, led_tcp_port)
+        openrgb_link.turn_off()
+        time.sleep(off_seconds)
+
+    reset_led_cache()
+
+
+def _start_sleep_shutdown_listener():
+    """Startet einen Hintergrund-Thread, der ueber DBus (System-Bus,
+    org.freedesktop.login1.Manager) auf die Signale PrepareForSleep und
+    PrepareForShutdown lauscht - beide werden mit einem bool-Argument
+    gesendet (True kurz bevor der PC tatsaechlich schlafen geht bzw.
+    herunterfaehrt, False beim Aufwachen bzw. bei einem abgebrochenen
+    Shutdown). Bei True wird einmal kurz in der zuletzt gezeigten Farbe
+    geblinkt (siehe blink_leds()) - komplett optional per
+    led_settings.json umschaltbar (siehe led_settings.is_enabled()/
+    is_blink_on_sleep_enabled()).
+
+    Nutzt dbus-python + eine GLib-Ereignisschleife (beide auf SteamOS/
+    Bazzite bereits systemweit vorhanden, siehe README) statt einer
+    zusaetzlichen Abhaengigkeit. Faengt jeden Fehler beim Aufsetzen ab
+    (z. B. falls eine der Bibliotheken doch fehlt oder kein System-Bus
+    erreichbar ist) und laeuft dann einfach ohne dieses Feature weiter,
+    statt den ganzen Dienst zum Absturz zu bringen - rein optionales
+    Extra, RFID-Tag-Erkennung/Spielstart haengen nicht davon ab."""
+    try:
+        import dbus
+        from dbus.mainloop.glib import DBusGMainLoop
+        from gi.repository import GLib
+    except ImportError as e:
+        print(f"Sleep/Shutdown-Blinken nicht verfuegbar (DBus/PyGObject fehlt: {e}) - wird uebersprungen.", flush=True)
         return
 
-    ok = led_link.set_color(led_ip, led_tcp_port, color) if color else led_link.turn_off(led_ip, led_tcp_port)
-    if ok:
-        _led_pico_ip = led_ip
-        _last_led_color = color
-    else:
-        # IP war offenbar nicht (mehr) erreichbar - naechstes Mal neu
-        # ermitteln statt dauerhaft gegen eine tote IP zu senden.
-        _led_pico_ip = None
+    def on_prepare(start, anlass):
+        if not start:
+            return
+        if not led_settings.is_enabled() or not led_settings.is_blink_on_sleep_enabled():
+            return
+        color = _last_led_color
+        if color in (None, _UNSET, _LED_DISABLED):
+            color = led_settings.get_idle_color()
+        print(f"{anlass} steht bevor - LEDs blinken.", flush=True)
+        blink_leds(color)
+
+    def run_loop():
+        try:
+            DBusGMainLoop(set_as_default=True)
+            bus = dbus.SystemBus()
+            bus.add_signal_receiver(
+                lambda start: on_prepare(bool(start), "Suspend"),
+                signal_name="PrepareForSleep",
+                dbus_interface="org.freedesktop.login1.Manager",
+            )
+            bus.add_signal_receiver(
+                lambda start: on_prepare(bool(start), "Shutdown"),
+                signal_name="PrepareForShutdown",
+                dbus_interface="org.freedesktop.login1.Manager",
+            )
+            GLib.MainLoop().run()
+        except Exception as e:
+            print(f"Sleep/Shutdown-Blinken: Fehler beim Einrichten: {e}", flush=True)
+
+    threading.Thread(target=run_loop, name="sleep-shutdown-listener", daemon=True).start()
+
+
+def _hex_to_hsv(color):
+    r = int(color[1:3], 16) / 255
+    g = int(color[3:5], 16) / 255
+    b = int(color[5:7], 16) / 255
+    return colorsys.rgb_to_hsv(r, g, b)
+
+
+def _download_gradient_color(progress):
+    """Farbverlauf zwischen den in led_settings.json konfigurierten
+    Start-/Endfarben (Standard Rot bei 0%, Gruen bei 100%, siehe
+    led_settings.get_download_gradient_start()/-_end()), fuer das
+    Download-Pulsieren im Leerlauf (siehe _download_monitor_loop()) - kein
+    Tag mit Spiel aufliegend, also keine eigene Farbe zum Pulsieren
+    vorhanden. Interpoliert bewusst im HSV-Farbton (nicht direkt in RGB),
+    damit der Standard-Verlauf Rot->Gruen wie erwartet ueber Gelb bei 50%
+    fuehrt (Rot=0 Grad, Gelb=60 Grad, Gruen=120 Grad im Farbkreis) - eine
+    direkte RGB-Interpolation wuerde bei 50% stattdessen ein blasses Oliv
+    ergeben."""
+    progress = max(0.0, min(1.0, progress))
+    h1, s1, v1 = _hex_to_hsv(led_settings.get_download_gradient_start())
+    h2, s2, v2 = _hex_to_hsv(led_settings.get_download_gradient_end())
+    h = h1 + (h2 - h1) * progress
+    s = s1 + (s2 - s1) * progress
+    v = v1 + (v2 - v1) * progress
+    r, g, b = colorsys.hsv_to_rgb(h, s, v)
+    return f"#{round(r * 255):02x}{round(g * 255):02x}{round(b * 255):02x}"
+
+
+def _scale_color(color, factor):
+    """Skaliert eine Hex-Farbe um factor (0.0-1.0) - fuer den
+    Helligkeitsverlauf beim Pulsieren (siehe _download_monitor_loop())."""
+    factor = max(0.0, min(1.0, factor))
+    r, g, b = int(color[1:3], 16), int(color[3:5], 16), int(color[5:7], 16)
+    return f"#{round(r * factor):02x}{round(g * factor):02x}{round(b * factor):02x}"
+
+
+_progress_smooth_appid = None
+_progress_smooth_value = 0.0
+_progress_smooth_time = 0.0
+_progress_smooth_rate = 0.0
+
+
+def _smoothed_download_progress(appid, raw_progress, actively_transferring=True):
+    """Steam schreibt BytesDownloaded/BytesToDownload im Manifest nur alle
+    paar Minuten neu (siehe download_monitor.py), obwohl im Hintergrund
+    laufend tatsaechlich Daten uebertragen werden - eine direkte
+    Weiterverwendung des rohen Werts liesse die LED-Farbe ueber diese
+    langen Strecken einfrieren und nur beim naechsten echten
+    Steam-Schreibvorgang sprunghaft weiterspringen (wirkte im Test wie
+    'aendert sich nur beim Aus-/Wiedereinschalten', siehe Chatverlauf, da
+    genau dabei zufaellig ein frischer Wert gelesen wurde). Extrapoliert
+    stattdessen zwischen den seltenen echten Messwerten linear anhand der
+    zuletzt beobachteten Rate (Fortschritt pro Sekunde zwischen den beiden
+    letzten echten Werten), gedeckelt auf maximal 5 Prozentpunkte
+    Vorsprung gegenueber dem letzten echten Wert, damit ein zwischenzeitlich
+    tatsaechlich pausierter/gestoppter Download nicht unbegrenzt
+    weiterzuwandern scheint.
+
+    actively_transferring (siehe download_monitor.is_actively_transferring()):
+    False bedeutet, Steam hat appid gerade zugunsten eines anderen
+    gleichzeitig wartenden Downloads pausiert (mehrere Titel gleichzeitig
+    in der Warteschlange sind auf diesem System keine Seltenheit, siehe
+    Chatverlauf) - die Extrapolation wird dann eingefroren, statt mit der
+    zuletzt beobachteten (jetzt nicht mehr gueltigen) Rate optimistisch
+    weiterzuschaetzen."""
+    global _progress_smooth_appid, _progress_smooth_value, _progress_smooth_time, _progress_smooth_rate
+
+    now = time.monotonic()
+
+    if appid != _progress_smooth_appid:
+        _progress_smooth_appid = appid
+        _progress_smooth_value = raw_progress
+        _progress_smooth_time = now
+        _progress_smooth_rate = 0.0
+        return raw_progress
+
+    if raw_progress != _progress_smooth_value:
+        dt = now - _progress_smooth_time
+        if dt > 0:
+            _progress_smooth_rate = max(0.0, (raw_progress - _progress_smooth_value) / dt)
+        _progress_smooth_value = raw_progress
+        _progress_smooth_time = now
+        return raw_progress
+
+    if not actively_transferring:
+        return _progress_smooth_value
+
+    extrapolated = _progress_smooth_value + _progress_smooth_rate * (now - _progress_smooth_time)
+    extrapolated = min(extrapolated, _progress_smooth_value + 0.05, 1.0)
+    return max(0.0, extrapolated)
+
+
+def _download_monitor_loop():
+    """Laeuft dauerhaft in einem eigenen Hintergrund-Thread (siehe main()):
+    prueft, ob Steam aktuell etwas herunterlaedt/aktualisiert (siehe
+    download_monitor.get_download_progress()), und laesst waehrenddessen
+    die LEDs sanft pulsieren (Sinus-Helligkeitsverlauf, ca. alle 3
+    Sekunden ein voller Zyklus) - in der aktuell aufliegenden Spielfarbe,
+    falls ein per Tag gestartetes Spiel laeuft (siehe _running_game),
+    sonst (Leerlauf/"Konsole an") in einem konfigurierbaren Farbverlauf je
+    nach Downloadfortschritt (siehe _download_gradient_color()). Ist
+    nichts (mehr) im Download oder das Feature per led_settings.json
+    deaktiviert
+    (download_pulse, siehe led_settings.py), wird nur alle 2s billig
+    nachgeschaut, statt staendig zu pulsieren. Setzt/loescht
+    _download_pulse_active, damit update_led() (Hauptschleife) waehrend
+    des Pulsierens nicht dagegen ansendet, und ruft beim Ende eines
+    Downloads reset_led_cache() auf, damit update_led() danach zuverlaessig
+    den eigentlichen statischen Zustand wiederherstellt.
+
+    Wichtig: die Led_Pico-IP wird bewusst nur EINMAL beim Einstieg ins
+    Pulsieren ermittelt (discover_led_pico() kann bis zu dessen Timeout
+    dauern, siehe led_link.py) und dann fuer die Dauer des Downloads
+    zwischengespeichert - eine Neuermittlung bei jedem einzelnen
+    Puls-Tick (alle 0.1s) wuerde ohne konfigurierten/erreichbaren
+    Led_Pico das fluessige Pulsieren komplett ausbremsen (der Ablauf
+    haette dann effektiv die Dauer des Discovery-Timeouts pro Tick statt
+    0.1s, siehe Chatverlauf).
+
+    Aus demselben Grund wird auch download_monitor.get_download_progress()
+    (fragt bevorzugt live per CDP-Websocket bei Steams eigener UI nach,
+    siehe download_monitor.py - jeder Aufruf oeffnet dafuer eine eigene
+    Verbindung und dauert ca. 20-50ms) NICHT bei jedem 0.1s-Puls-Tick neu
+    abgefragt, sondern nur einmal pro Sekunde (_PROGRESS_POLL_INTERVAL) -
+    dazwischen wird der zwischengespeicherte Wert fuer die reine
+    Helligkeits-Animation weiterverwendet, sonst wuerde das Pulsieren
+    ueber die gesamte Downloaddauer hinweg 10x/Sekunde unnoetig neue
+    Verbindungen zu Steams Debug-Port aufbauen."""
+    global _download_pulse_active
+
+    _PROGRESS_POLL_INTERVAL = 1.0
+
+    t = 0.0
+    led_ip = None
+    was_pulsing = False
+    next_poll_time = 0.0
+    cached_progress_info = None
+    cached_active = True
+    while True:
+        pulse_wanted = led_settings.is_enabled() and led_settings.is_download_pulse_enabled()
+        now = time.monotonic()
+
+        if not pulse_wanted:
+            cached_progress_info = None
+        elif now >= next_poll_time:
+            cached_progress_info = download_monitor.get_download_progress()
+            cached_active = True
+            if cached_progress_info is not None:
+                active = download_monitor.is_actively_transferring(cached_progress_info[0])
+                cached_active = active if active is not None else True
+            next_poll_time = now + _PROGRESS_POLL_INTERVAL
+
+        progress_info = cached_progress_info
+
+        if progress_info is None:
+            if _download_pulse_active:
+                _download_pulse_active = False
+                reset_led_cache()
+            was_pulsing = False
+            next_poll_time = 0.0
+            time.sleep(2)
+            continue
+
+        if not was_pulsing:
+            led_config = led_link.load_config()
+            led_ip = led_config.get("led_pico_ip") or _led_pico_ip or led_link.discover_led_pico(led_config.get("udp_port", 5008))
+            was_pulsing = True
+
+        _appid, progress = progress_info
+        progress = _smoothed_download_progress(_appid, progress, cached_active)
+        _download_pulse_active = True
+
+        if _running_game is not None:
+            base_color = _last_led_color
+            if base_color in (None, _UNSET, _LED_DISABLED):
+                base_color = led_settings.get_idle_color()
+        elif led_settings.is_download_gradient_enabled():
+            base_color = _download_gradient_color(progress)
+        else:
+            # Farbverlauf deaktiviert (siehe led_settings.py) - im
+            # Leerlauf trotzdem pulsieren, aber in der normalen
+            # Leerlauf-Farbe statt im Rot-Gelb-Gruen-Verlauf.
+            base_color = led_settings.get_idle_color()
+
+        brightness = 0.35 + 0.65 * (0.5 + 0.5 * math.sin(t))
+        color = _scale_color(base_color, brightness)
+
+        led_tcp_port = led_link.load_config().get("tcp_port", 5007)
+        if led_ip:
+            led_link.set_color(led_ip, led_tcp_port, color)
+        openrgb_link.set_color(color)
+
+        t += 0.3
+        time.sleep(0.1)
+
+
+def _start_download_pulse_listener():
+    """Startet _download_monitor_loop() (siehe dort) in einem eigenen
+    Hintergrund-Thread, damit main() nicht blockiert wird."""
+    threading.Thread(target=_download_monitor_loop, name="download-pulse", daemon=True).start()
 
 
 def main():
@@ -408,14 +773,54 @@ def main():
     pico_ip = configured_ip
 
     print("SteamOS <-> Pico Monitor gestartet", flush=True)
+    # Einmalig beim Start: alle OpenRGB-Geraete ausser den target_names
+    # (Standard: Corsair, siehe openrgb_config.json) komplett ausschalten,
+    # statt mit ihren eigenen Werkseffekten (Rainbow etc.) weiterzulaufen -
+    # rein optional, ohne laufenden OpenRGB-Server ein stiller No-Op.
+    openrgb_link.turn_off_others()
+    # Blinkt die LEDs kurz an, sobald der PC schlafen geht/herunterfaehrt
+    # (siehe dort) - laeuft in einem eigenen Hintergrund-Thread, blockiert
+    # main() also nicht.
+    _start_sleep_shutdown_listener()
+    # Laesst die LEDs waehrend eines laufenden Steam-Downloads pulsieren
+    # (siehe dort) - ebenfalls ein eigener Hintergrund-Thread.
+    _start_download_pulse_listener()
+
+    # Fuer die Suspend-Erkennung unten - bewusst time.monotonic() statt
+    # time.time(), da Monotonic-Zeit beim Suspend selbst mit pausiert
+    # (die reale Uhrzeit springt beim Aufwachen einfach weiter, aber auch
+    # der ganze Prozess war ja die ganze Zeit pausiert - der Vergleich
+    # unten erkennt also zuverlaessig eine lange reale Pause).
+    last_loop_time = time.monotonic()
 
     while True:
+        now_monotonic = time.monotonic()
+        # Eine Zeitluecke deutlich groesser als interval zwischen zwei
+        # Durchlaeufen bedeutet praktisch immer: der PC war im Suspend und
+        # ist gerade aufgewacht (der Prozess pausiert dabei einfach, siehe
+        # oben). LED-Cache zuruecksetzen (siehe reset_led_cache()), damit
+        # die aktuelle Farbe garantiert neu gesendet wird, auch falls ein
+        # angeschlossenes Geraet waehrend des Suspends seinen Zustand
+        # verloren hat.
+        if now_monotonic - last_loop_time > interval * 5:
+            print("Aus dem Suspend aufgewacht - LED-Zustand wird neu gesendet.", flush=True)
+            reset_led_cache()
+        last_loop_time = now_monotonic
+
         if not pico_ip:
             print("Suche Pico im Netzwerk...", flush=True)
             pico_ip = pico_link.discover_pico(udp_port)
             if pico_ip:
                 print(f"Pico gefunden unter {pico_ip}", flush=True)
 
+        # current bleibt None, wenn der Pico nicht gefunden/erreichbar ist -
+        # update_led() (siehe unten, jetzt bei jedem Durchlauf aufgerufen,
+        # nicht nur wenn der Pico erreichbar ist) zeigt dann ueber
+        # resolve_led_color() automatisch die Leerlauf-Farbe (Standard
+        # Weiss) an, statt die LEDs unveraendert im letzten Zustand zu
+        # lassen - so leuchten sie schon, sobald dieser Dienst startet,
+        # auch bevor/ohne dass der Pico ueberhaupt gefunden wurde.
+        current = None
         if pico_ip:
             reachable = pico_link.ping_pico(pico_ip, tcp_port)
             timestamp = time.strftime("%H:%M:%S")
@@ -429,7 +834,6 @@ def main():
                 current = pico_link.fetch_current(pico_ip, tcp_port)
                 check_game_still_active(current)
                 handle_tag(pico_ip, tcp_port, timestamp)
-                update_led(current)
             else:
                 print(f"[{timestamp}] Pico NICHT erreichbar, versuche erneut...", flush=True)
                 pico_link.write_state("nicht_erreichbar", pico_ip)
@@ -444,6 +848,7 @@ def main():
             print(f"[{time.strftime('%H:%M:%S')}] Pico nicht gefunden", flush=True)
             pico_link.write_state("nicht_gefunden", None)
 
+        update_led(current)
         time.sleep(interval)
 
 

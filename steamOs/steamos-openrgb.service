@@ -1,0 +1,12 @@
+[Unit]
+Description=OpenRGB SDK-Server (fuer lokale USB-RGB-Geraete, z. B. einen Corsair-LED-Streifen)
+After=graphical-session.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/flatpak run org.openrgb.OpenRGB --server --startminimized
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=default.target

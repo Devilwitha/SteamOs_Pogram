@@ -3,7 +3,7 @@
   "version": 1,
   "height_cm": "10",
   "dpi": "300",
-  "banner_path": "C:\\Users\\devil\\Documents\\GitHub\\ProffieOSM33\\SteamOs_Pogram\\tools\\cover_maker\\Cover\\halo\\385278a8c411470794a501955e0ff2f5.png",
+  "banner_path": "/home/deck/Documents/Github/SteamOs_Pogram/tools/cover_maker/Cover/halo/385278a8c411470794a501955e0ff2f5.png",
   "banner_height_cm": "1.0",
   "panels": [
     {
@@ -30,9 +30,9 @@
     },
     {
       "name": "Front",
-      "image_path": "C:\\Users\\devil\\Documents\\GitHub\\ProffieOSM33\\SteamOs_Pogram\\tools\\cover_maker\\Cover\\halo\\757954970_1927221591295371_7772111787430645236_n.jpg",
+      "image_path": "/home/deck/Documents/Github/SteamOs_Pogram/tools/cover_maker/Cover/halo/757954970_1927221591295371_7772111787430645236_n.jpg",
       "center_x": 0.5128205128205128,
-      "center_y": 0.0,
+      "center_y": 0.4769230769230769,
       "width_cm": "6.0",
       "mode": "Zuschneiden (Ausschnitt waehlen)",
       "is_front": true,
@@ -74,9 +74,9 @@
     },
     {
       "name": "Rueckseite",
-      "image_path": "C:\\Users\\devil\\Documents\\GitHub\\ProffieOSM33\\SteamOs_Pogram\\tools\\cover_maker\\Cover\\halo\\Hero-Customization-abffa6681daaaba38c9d.jpg",
-      "center_x": 0.46153846153846156,
-      "center_y": 0.5153846153846153,
+      "image_path": "/home/deck/Documents/Github/SteamOs_Pogram/tools/cover_maker/Cover/halo/Hero-Customization-abffa6681daaaba38c9d.jpg",
+      "center_x": 0.5,
+      "center_y": 0.5,
       "width_cm": "6.0",
       "mode": "Zuschneiden (Ausschnitt waehlen)",
       "is_front": false,
@@ -87,12 +87,7 @@
       "rec_title": "Empfohlen",
       "min_text_content": "64-Bit-Prozessor \nOS: Windows 11\nCPU: AMD Ryzen 5 3600\nRam: 16 GB RAM\nGPU: Radeon RX 6600\nSSD: 100 GB ",
       "rec_text_content": "64-Bit-Prozessor\nOS: Windows 11\nCPU: AMD Ryzen 7\nRam: 32 GB RAM\nGPU: Radeon RX 9070\nSSD: 100 GB",
-      "logo_paths": [
-        "C:\\Users\\devil\\Documents\\GitHub\\ProffieOSM33\\SteamOs_Pogram\\tools\\cover_maker\\Cover\\halo\\5563_Pci9.webp",
-        "C:\\Users\\devil\\Documents\\GitHub\\ProffieOSM33\\SteamOs_Pogram\\tools\\cover_maker\\Cover\\halo\\images (1).png",
-        "C:\\Users\\devil\\Documents\\GitHub\\ProffieOSM33\\SteamOs_Pogram\\tools\\cover_maker\\Cover\\halo\\images (2).png",
-        "C:\\Users\\devil\\Documents\\GitHub\\ProffieOSM33\\SteamOs_Pogram\\tools\\cover_maker\\Cover\\halo\\Xbox_Game_Studios.svg.webp"
-      ],
+      "logo_paths": [],
       "show_compat": true,
       "steamdeck_rating": "Spielbar",
       "steammachine_rating": "Verifiziert",

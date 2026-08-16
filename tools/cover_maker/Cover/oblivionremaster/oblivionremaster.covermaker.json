@@ -3,7 +3,7 @@
   "version": 1,
   "height_cm": "10",
   "dpi": "300",
-  "banner_path": "C:\\Users\\devil\\Documents\\GitHub\\ProffieOSM33\\SteamOs_Pogram\\tools\\cover_maker\\Cover\\oblivionremaster\\385278a8c411470794a501955e0ff2f5.png",
+  "banner_path": "/home/deck/Documents/Github/SteamOs_Pogram/tools/cover_maker/Cover/oblivionremaster/385278a8c411470794a501955e0ff2f5.png",
   "banner_height_cm": "1.0",
   "panels": [
     {
@@ -30,7 +30,7 @@
     },
     {
       "name": "Front",
-      "image_path": "C:\\Users\\devil\\Documents\\GitHub\\ProffieOSM33\\SteamOs_Pogram\\tools\\cover_maker\\Cover\\oblivionremaster\\elderscrolls-1745339694084.webp",
+      "image_path": "/home/deck/Documents/Github/SteamOs_Pogram/tools/cover_maker/Cover/oblivionremaster/elderscrolls-1745339694084.webp",
       "center_x": 0.5,
       "center_y": 0.5,
       "width_cm": "6.0",
@@ -74,7 +74,7 @@
     },
     {
       "name": "Rueckseite",
-      "image_path": "C:\\Users\\devil\\Documents\\GitHub\\ProffieOSM33\\SteamOs_Pogram\\tools\\cover_maker\\Cover\\oblivionremaster\\Screenshot 2026-08-12 212906.png",
+      "image_path": "/home/deck/Documents/Github/SteamOs_Pogram/tools/cover_maker/Cover/oblivionremaster/Screenshot 2026-08-12 212906.png",
       "center_x": 0.5,
       "center_y": 0.5,
       "width_cm": "6.0",
@@ -85,14 +85,17 @@
       "art_ratio_percent": 50.0,
       "min_title": "Minimum",
       "rec_title": "Empfohlen",
-      "min_text_content": "OS: \nProcessor: \nMemory: \nGraphics: \nStorage: ",
-      "rec_text_content": "OS: \nProcessor: \nMemory: \nGraphics: \nStorage: ",
-      "logo_paths": [],
+      "min_text_content": "Setzt 64-Bit-Prozessor und -Betriebssystem voraus\nBETRIEBSSYSTEM: Windows 10 version 21H1 (10.0.19043)\nPROZESSOR: AMD Ryzen 5 2600X, Intel Core i7-6800K\nARBEITSSPEICHER: 16 GB RAM\nGRAFIK: AMD Radeon RX 5700, NVIDIA GeForce 1070 Ti\nDIRECTX: Version 12\nSPEICHERPLATZ: 125 GB verfügbarer Speicherplatz\nZUSÄTZLICHE ANMERKUNGEN: SSD Required",
+      "rec_text_content": "Setzt 64-Bit-Prozessor und -Betriebssystem voraus\nBETRIEBSSYSTEM: Windows 10 version 21H1 (10.0.19043)\nPROZESSOR: AMD Ryzen 5 2600X, Intel Core i7-6800K\nARBEITSSPEICHER: 16 GB RAM\nGRAFIK: AMD Radeon RX 5700, NVIDIA GeForce 1070 Ti\nDIRECTX: Version 12\nSPEICHERPLATZ: 125 GB verfügbarer Speicherplatz\nZUSÄTZLICHE ANMERKUNGEN: SSD Required",
+      "logo_paths": [
+        "/home/deck/Documents/Github/SteamOs_Pogram/tools/cover_maker/Cover/oblivionremaster/images (2).png",
+        "/home/deck/Documents/Github/SteamOs_Pogram/tools/cover_maker/Cover/oblivionremaster/35-356196_bethesda-softworks-logo-png-transparent-png.png"
+      ],
       "show_compat": true,
-      "steamdeck_rating": "Nicht bewertet",
-      "steammachine_rating": "Nicht bewertet",
-      "input_kbm": false,
-      "input_controller": false
+      "steamdeck_rating": "Spielbar",
+      "steammachine_rating": "Verifiziert",
+      "input_kbm": true,
+      "input_controller": true
     }
   ]
 }

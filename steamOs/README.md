@@ -50,15 +50,20 @@ chmod +x install.sh uninstall.sh
 ./install.sh
 ```
 
-Das Skript kopiert `steamos-pico-monitor.service` nach
-`~/.config/systemd/user/`, aktiviert und startet den Dienst und richtet
-Linger fuer den aktuellen Benutzer ein.
+Das Skript kopiert `steamos-pico-monitor.service`, `steamos-gui.service`
+sowie `steamos-game-scanner.service`/`.timer` nach
+`~/.config/systemd/user/`, aktiviert und startet alle drei und richtet
+Linger fuer den aktuellen Benutzer ein. Die GUI (siehe unten) laeuft danach
+dauerhaft im Hintergrund unter `http://127.0.0.1:8080/`, ohne dass sie
+manuell gestartet werden muss.
 
 Status pruefen:
 
 ```bash
 systemctl --user status steamos-pico-monitor.service
+systemctl --user status steamos-gui.service
 journalctl --user -u steamos-pico-monitor.service -f
+journalctl --user -u steamos-gui.service -f
 ```
 
 Deinstallieren:
@@ -85,7 +90,7 @@ Tabelle `games`:
 | `installed` | `1`, falls der Installationsordner tatsaechlich vorhanden ist, sonst `0` |
 | `install_path` | Pfad zum installierten Spiel, nur gesetzt wenn `installed = 1` |
 | `launch_command` | `steam -applaunch <appid>`, nur gesetzt wenn `installed = 1` (startet das Spiel inkl. Proton-Kompatibilitaetsschicht ueber den Steam-Client) |
-| `color` | Optionale, in der GUI zugewiesene Farbe (Hex, z. B. `#ff8800`) fuer den [Led_Pico](../Led_Pico) - wird von `game_scanner.py` beim erneuten Scannen **nicht** ueberschrieben |
+| `color` | Farbe (Hex, z. B. `#ff8800`) fuer LED-Anzeige (Led_Pico/OpenRGB) - manuell in der GUI zuweisbar, sonst automatisch aus dem Steam-Cover ermittelt (siehe unten) - wird von `game_scanner.py` beim erneuten Scannen **nicht** ueberschrieben, sobald einmal gesetzt |
 | `audio_path` | Pfad zur in der GUI hochgeladenen Sound-Datei (siehe `gui/gui_server.py`), oder `NULL` ohne hinterlegten Sound - wird beim erneuten Scannen **nicht** ueberschrieben |
 | `audio_enabled` | `1` (Standard) = Sound wird beim Tag-Start automatisch abgespielt, `0` = Datei bleibt erhalten, wird aber nur noch manuell (Test-Play-Button) abgespielt - per "Aktiv"/"Inaktiv"-Button in der GUI umschaltbar |
 | `last_scanned` | Zeitpunkt des letzten Scans |
@@ -100,6 +105,29 @@ python3 steamOs/game_scanner.py
 (`steamos-game-scanner.timer`) ein, der die Bibliothek beim Booten und
 danach alle 30 Minuten neu scannt, damit neu installierte oder entfernte
 Spiele automatisch erfasst werden.
+
+### Automatische Farbermittlung aus dem Steam-Cover
+
+Neue Spiele ohne eigene `color` bekommen bei jedem Scan automatisch eine
+zugewiesen: `game_scanner.py` sucht in Steams eigenem lokalem Bildcache
+(`~/.local/share/Steam/appcache/librarycache/<appid>/`, bevorzugt
+`library_600x900.jpg`, sonst `header.jpg` oder eine beliebige andere Datei
+im Ordner) nach einem Cover und ermittelt daraus per
+[Pillow](https://pillow.readthedocs.io/) (`pip install --user pillow` -
+anders als der Rest von `steamOs/` bewusst nicht auf die Standardbibliothek
+beschraenkt, siehe `openrgb-python`-Begruendung weiter unten) die
+haeufigste Farbe einer stark reduzierten Farbpalette (deutlich lebendiger
+als ein reiner Pixel-Mittelwert). Ohne brauchbares Cover oder ohne
+installiertes Pillow wird stattdessen eine kraeftige Zufallsfarbe
+verwendet - nie fuer alle Spiele dieselbe Farbe. Einmal gesetzte Farben
+werden bei spaeteren Scans **nicht** mehr angetastet (weder automatisch
+noch manuell gesetzte).
+
+In der GUI (sowie der Pico-Steuerseite) setzt der Button
+**"Farben zuruecksetzen..."** oberhalb der Spieletabelle die Farbe
+*aller* Spiele auf ihre automatisch ermittelte zurueck - das
+ueberschreibt auch manuell zugewiesene Farben (mit
+Sicherheitsabfrage, da nicht rueckgaengig zu machen).
 
 ### Windows-Testversion (`game_scanner_windows.py`)
 
@@ -119,7 +147,10 @@ python game_scanner_windows.py
 ## Spielauswahl-GUI (`gui/`)
 
 [`gui/gui_server.py`](gui/gui_server.py) ist eine eigene, in `gui/`
-gekapselte Weboberflaeche zur Auswahl eines Spiels aus `games.db`:
+gekapselte Weboberflaeche zur Auswahl eines Spiels aus `games.db`. Nach
+`./install.sh` (siehe oben) laeuft sie bereits automatisch als
+`steamos-gui.service`; manueller Start ist nur fuers lokale Testen ausserhalb
+des Dienstes noetig:
 
 ```bash
 python3 steamOs/gui/gui_server.py
@@ -241,8 +272,11 @@ Takt zusaetzlich Folgendes:
 4. Unabhaengig davon wird bei jedem Takt zusaetzlich per `CURRENT?` der
    aktuell aufliegende Tag abgefragt (nicht einmalig wie `TAG?`, siehe
    oben) und die daraus ermittelte Farbe (Tag-Farbe, sonst Spiel-Farbe,
-   sonst aus) an einen optionalen [Led_Pico](../Led_Pico) weitergereicht -
-   nur wenn sie sich seit dem letzten Takt geaendert hat.
+   sonst Weiss im Leerlauf - siehe `pico_client.IDLE_LED_COLOR`) an einen
+   optionalen [Led_Pico](../Led_Pico) sowie optionale lokale USB-RGB-LEDs
+   per OpenRGB (siehe [Corsair/OpenRGB-LEDs](#corsair-openrgb-usb-rgb-leds))
+   weitergereicht - jeweils nur wenn sie sich seit dem letzten Takt
+   geaendert hat.
 
 ### Automatisches Beenden bei entferntem/gewechseltem Tag
 
@@ -294,6 +328,113 @@ automatische Suche per UDP-Broadcast, sonst fest eintragen. Ist kein
 Led_Pico im Netzwerk konfiguriert/erreichbar, wird das beim Farb-Update
 stillschweigend uebersprungen - er ist rein optional, der RFID-Pico/
 Spielstart funktioniert unabhaengig davon.
+
+<a id="corsair-openrgb-usb-rgb-leds"></a>
+## OpenRGB (lokale USB-RGB-LEDs, `openrgb_config.json`)
+
+```json
+{
+  "enabled": true,
+  "host": "127.0.0.1",
+  "port": 6742,
+  "target_names": ["Corsair"]
+}
+```
+
+Ein viertes, ebenfalls optionales "Geraet": lokal per USB angeschlossene
+RGB-LEDs (z. B. ein Corsair-LED-Streifen), angesteuert ueber
+[OpenRGB](https://openrgb.org) statt eines eigenen Pico. Zeigt dieselbe
+Farbe wie der Led_Pico (siehe oben), aber lokal am PC. Setzt voraus:
+
+1. OpenRGB installiert (auf SteamOS/Bazzite z. B. per
+   `flatpak install flathub org.openrgb.OpenRGB`) und als Dienst aktiv
+   (`steamos-openrgb.service`, wird von `install.sh` nur eingerichtet,
+   wenn OpenRGB tatsaechlich installiert ist - sonst wuerde der Dienst mit
+   `Restart=always` endlos gegen eine fehlende Flatpak-App fehlschlagen).
+2. Die offizielle Python-Bibliothek installiert:
+   `pip install --user openrgb-python` (anders als der Rest von `steamOs/`
+   bewusst nicht auf die Standardbibliothek beschraenkt - das binaere
+   OpenRGB-SDK-Protokoll ist zu komplex fuer eine eigene, robuste
+   Nachimplementierung).
+
+Ein PC meldet OpenRGB typischerweise mehrere RGB-faehige Geraete
+(Grafikkarte, Mainboard, Maus, ...), von denen aber nur die zu
+`target_names` passenden (Gross-/Kleinschreibung egal, Teilstring reicht)
+die Spiel-/Leerlauf-Farbe bekommen - Standard `["Corsair"]`. **Alle
+uebrigen Geraete werden einmalig beim Start von `pico_client.py` komplett
+ausgeschaltet** (siehe `openrgb_link.turn_off_others()`), damit sie nicht
+mit eigenen Werkseffekten (Rainbow etc.) weiterlaufen und stoeren. Bei
+mehreren/anderen Ziel-Geraeten `target_names` anpassen - Namen wie in
+`flatpak run org.openrgb.OpenRGB --list-devices` angezeigt.
+`enabled: false` deaktiviert die gesamte Integration (weder Farb-Sync
+noch Ausschalten der uebrigen Geraete), ohne `openrgb_link.py` selbst
+aendern zu muessen. Ist OpenRGB nicht installiert/erreichbar oder die
+Bibliothek fehlt, wird das beim Farb-Update stillschweigend uebersprungen
+(siehe `openrgb_link.py`) - rein optional, der RFID-Pico/Spielstart
+funktioniert unabhaengig davon.
+
+## LilyGo-Statusdisplay (`lilygo_config.json`)
+
+```json
+{
+  "lilygo_ip": "",
+  "tcp_port": 5009,
+  "udp_port": 5010,
+  "interval_seconds": 2
+}
+```
+
+Ein drittes, ebenfalls optionales Geraet: ein
+[LilyGo T-Display-S3](../lilygo), das CPU-/GPU-Auslastung sowie eine
+Temperatur anzeigt. `stats_monitor.py` liest die Werte ohne
+Zusatzpakete direkt aus sysfs/procfs (siehe `system_stats.py`) und
+schickt sie alle `interval_seconds` an das Display (siehe
+`lilygo_link.py`) - analog zum Led_Pico laeuft das als eigener,
+unabhaengiger Hintergrund-Dienst (`steamos-lilygo-monitor.service`, wird
+von `install.sh` mit eingerichtet). `lilygo_ip` leer lassen fuer
+automatische Suche per UDP-Broadcast, sonst fest eintragen. Ist kein
+Display im Netzwerk konfiguriert/erreichbar, laeuft der Dienst einfach
+weiter, ohne dass das sonst irgendwelche Auswirkungen hat.
+
+## Wake-on-USB (Controller weckt den PC aus dem Standby)
+
+`install.sh` richtet zusaetzlich eine udev-Regel ein, die den PC aus dem
+Standby (S3-Suspend) aufweckt, sobald am konfigurierten USB-Controller
+etwas passiert (z. B. Einschalten) - unabhaengig vom RFID-Pico/Wake-on-LAN
+weiter oben. Betrifft standardmaessig den **8BitDo Ultimate 2**
+(USB-ID `2dc8:6013`) - fuer einen anderen Controller die Variablen
+`CONTROLLER_VENDOR_ID`/`CONTROLLER_PRODUCT_ID` am Anfang des
+entsprechenden Abschnitts in `install.sh` anpassen (Wert per `lsusb`
+ermitteln).
+
+Ablauf beim Ausfuehren von `install.sh`:
+
+1. Die USB-Bus-Nummer des Controllers wird dynamisch ueber seine USB-ID
+   ermittelt (nicht fest einkompiliert, da sie sich mit dem physischen
+   Port aendern kann).
+2. Eine persistente Regel wird nach `/etc/udev/rules.d/10-wakeup.rules`
+   geschrieben (`SUBSYSTEM=="usb", KERNEL=="usbN", ATTR{power/wakeup}="enabled"`),
+   die dafuer sorgt, dass der Bus nach jedem Neustart/erneuten Einstecken
+   automatisch als Wake-Quelle aktiviert wird.
+3. Der aktuelle Zustand wird zusaetzlich sofort direkt gesetzt
+   (`udevadm trigger` allein wirkt bei einem bereits verbundenen Geraet
+   oft nicht zuverlaessig).
+
+**Voraussetzungen (im BIOS/UEFI, nicht Teil dieses Repos):**
+"Wake from USB"/"USB Wake Support" aktivieren, "ErP Mode" deaktivieren
+(schaltet sonst USB-Strom im Standby ab). Wake funktioniert **nicht** ueber
+Bluetooth, nur ueber eine echte USB-Verbindung (auch ein 2,4-GHz-USB-Dongle
+zaehlt dafuer als USB).
+
+Dieser Schritt ist der einzige in `install.sh`, der `sudo` braucht (Schreiben
+nach `/etc/udev/rules.d/`) - schlaegt er fehl, wird das mit einer
+Fehlermeldung uebersprungen, ohne den Rest des Skripts abzubrechen. Ist der
+Controller beim Ausfuehren von `install.sh` nicht angeschlossen, wird dieser
+Schritt uebersprungen (Hinweis wird ausgegeben) - `install.sh` bei
+angeschlossenem Controller erneut ausfuehren, um es nachzuholen. Status
+pruefen: `cat /sys/bus/usb/devices/usbN/power/wakeup` (sollte `enabled`
+zeigen, `usbN` durch die tatsaechliche Bus-Nummer ersetzen). `uninstall.sh`
+entfernt die Regel wieder.
 
 ## Konfiguration (`config.json`)
 

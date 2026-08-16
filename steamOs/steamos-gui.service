@@ -1,0 +1,13 @@
+[Unit]
+Description=SteamOS <-> Pico Spielauswahl-/Tag-Verwaltungs-GUI
+After=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/python3 @STEAMOS_DIR@/gui/gui_server.py
+WorkingDirectory=@STEAMOS_DIR@/gui
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=default.target
