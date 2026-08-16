@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- Diamant, angelehnt an das "&#9670;"-HUD-Symbol der Web-GUI -->
+    <path
+        android:pathData="M54,27 L74,54 L54,81 L34,54 Z"
+        android:fillColor="#00E5FF" />
+    <path
+        android:pathData="M54,38 L65,54 L54,70 L43,54 Z"
+        android:fillColor="#080B10" />
+    <path
+        android:pathData="M54,46 L59,54 L54,62 L49,54 Z"
+        android:fillColor="#FF2E97" />
+</vector>

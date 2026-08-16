@@ -3,3 +3,14 @@
 /Pico/__pycache__
 /steamOs/__pycache__
 /windows/logs
+
+# Android (android/)
+android/local.properties
+android/.gradle/
+android/.idea/
+android/*/build/
+android/build/
+android/.cxx/
+android/captures/
+android/*.iml
+android/.kotlin/

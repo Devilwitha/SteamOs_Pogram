@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+
+    <application
+        android:allowBackup="true"
+        android:icon="@mipmap/ic_launcher"
+        android:roundIcon="@mipmap/ic_launcher_round"
+        android:label="@string/app_name"
+        android:theme="@style/Theme.SteamOsPico"
+        android:usesCleartextTraffic="true">
+
+        <!--
+          usesCleartextTraffic: gui_server.py auf dem PC spricht bewusst nur
+          Klartext-HTTP im lokalen Netz (siehe steamOs/gui/gui_server.py und
+          Pico/control.html, die genauso zugreifen) - keine echte Alternative
+          ohne den PC-seitigen Server um TLS zu erweitern.
+        -->
+
+        <activity
+            android:name=".MainActivity"
+            android:exported="true"
+            android:label="@string/app_name"
+            android:theme="@style/Theme.SteamOsPico">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+    </application>
+
+</manifest>

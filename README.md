@@ -32,6 +32,11 @@ LED-Streifen, der das erkannte Spiel/den Tag farblich anzeigt.
 - **[windows/](windows)** - duenne Windows-Einstiegspunkte fuer denselben
   `steamOs/`-Code, nur zum lokalen Testen/Entwickeln auf einem
   Windows-PC ohne Steam Deck oder Pico-Hardware (siehe dortige README).
+- **[android/](android)** - native Android-App (Kotlin/Jetpack Compose), die
+  [`steamOs/gui/`](steamOs/gui) spiegelt: Controller-Menue (LEDs, Sound,
+  Spiel-/Tag-Zuordnung) und Verwaltungs-GUI (Tag-Tabelle, Sound-/Boot-Sound-/
+  Video-Uploads) als zwei Bereiche, ueber dieselben `/api/...`-JSON-Routen wie
+  [`Pico/control.html`](Pico/control.html) (siehe dortige README).
 
 ## Einrichtungsreihenfolge
 
