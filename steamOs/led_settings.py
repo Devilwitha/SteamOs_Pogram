@@ -24,12 +24,16 @@ von pico_client.py bei jedem update_led()-Aufruf:
   Farbverlauf zwischen download_gradient_start und -_end je nach
   Downloadfortschritt. Ebenfalls unabhaengig vom Hauptschalter
   umschaltbar.
-- download_gradient_start/-_end: die beiden Endfarben dieses Verlaufs
-  (Standard Rot bei 0%, Gruen bei 100%) - pico_client.py interpoliert
-  dazwischen im HSV-Farbton statt direkt in RGB, damit der
-  Standard-Verlauf erwartungsgemaess ueber Gelb bei 50% fuehrt (Rot=0,
-  Gelb=60, Gruen=120 Grad im Farbkreis) und dasselbe Prinzip auch fuer
-  andere gewaehlte Start-/Endfarben sinnvoll funktioniert.
+- download_gradient_start/-_mid/-_end: die drei Stuetzfarben dieses
+  Verlaufs bei 0/50/100% (Standard Rot/Gelb/Gruen) - pico_client.py
+  interpoliert jeweils zwischen zwei benachbarten Stuetzfarben (0-50% bzw.
+  50-100%) im HSV-Farbton statt direkt in RGB, damit z. B. eine
+  Rot-Gelb-Gruen-Kombination nicht ueber ein blasses Zwischen-Oliv
+  fuehrt. Die Mittelfarbe ist frei waehlbar (nicht mehr nur implizit aus
+  der HSV-Interpolation zwischen Start/Ende) - wichtig z. B. bei
+  Start-/Endfarben, deren automatische HSV-Zwischenfarbe nicht dem
+  gewuenschten Verlauf entspricht (etwa Rot -> Blau, das ueber Magenta
+  statt ueber ein sinnvolles "Mitte"-Gelb liefe).
 - download_gradient_enabled: separat vom Hauptschalter download_pulse
   (der steuert nur "pulsiert waehrend eines Downloads ueberhaupt oder
   nicht") - "false" laesst das Pulsieren im Leerlauf (kein Tag aufliegend)
@@ -52,6 +56,7 @@ _DEFAULT_CONFIG = {
     "blink_on_sleep": True,
     "download_pulse": True,
     "download_gradient_start": "#ff0000",
+    "download_gradient_mid": "#ffff00",
     "download_gradient_end": "#00ff00",
     "download_gradient_enabled": True,
 }
@@ -117,6 +122,16 @@ def get_download_gradient_start():
 def set_download_gradient_start(color):
     config = load_config()
     config["download_gradient_start"] = color
+    _save_config(config)
+
+
+def get_download_gradient_mid():
+    return load_config().get("download_gradient_mid") or "#ffff00"
+
+
+def set_download_gradient_mid(color):
+    config = load_config()
+    config["download_gradient_mid"] = color
     _save_config(config)
 
 

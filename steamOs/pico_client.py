@@ -566,25 +566,34 @@ def _hex_to_hsv(color):
     return colorsys.rgb_to_hsv(r, g, b)
 
 
-def _download_gradient_color(progress):
-    """Farbverlauf zwischen den in led_settings.json konfigurierten
-    Start-/Endfarben (Standard Rot bei 0%, Gruen bei 100%, siehe
-    led_settings.get_download_gradient_start()/-_end()), fuer das
-    Download-Pulsieren im Leerlauf (siehe _download_monitor_loop()) - kein
-    Tag mit Spiel aufliegend, also keine eigene Farbe zum Pulsieren
-    vorhanden. Interpoliert bewusst im HSV-Farbton (nicht direkt in RGB),
-    damit der Standard-Verlauf Rot->Gruen wie erwartet ueber Gelb bei 50%
-    fuehrt (Rot=0 Grad, Gelb=60 Grad, Gruen=120 Grad im Farbkreis) - eine
-    direkte RGB-Interpolation wuerde bei 50% stattdessen ein blasses Oliv
-    ergeben."""
-    progress = max(0.0, min(1.0, progress))
-    h1, s1, v1 = _hex_to_hsv(led_settings.get_download_gradient_start())
-    h2, s2, v2 = _hex_to_hsv(led_settings.get_download_gradient_end())
-    h = h1 + (h2 - h1) * progress
-    s = s1 + (s2 - s1) * progress
-    v = v1 + (v2 - v1) * progress
+def _hsv_lerp(color1, color2, t):
+    """Interpoliert zwischen zwei Hex-Farben im HSV-Farbton (nicht direkt
+    in RGB) - eine direkte RGB-Interpolation ergaebe bei z. B. Rot->Gruen
+    in der Mitte ein blasses Oliv statt eines kraeftigen Zwischentons."""
+    h1, s1, v1 = _hex_to_hsv(color1)
+    h2, s2, v2 = _hex_to_hsv(color2)
+    h = h1 + (h2 - h1) * t
+    s = s1 + (s2 - s1) * t
+    v = v1 + (v2 - v1) * t
     r, g, b = colorsys.hsv_to_rgb(h, s, v)
     return f"#{round(r * 255):02x}{round(g * 255):02x}{round(b * 255):02x}"
+
+
+def _download_gradient_color(progress):
+    """Farbverlauf ueber die drei in led_settings.json konfigurierten
+    Stuetzfarben bei 0/50/100% (Standard Rot/Gelb/Gruen, siehe
+    led_settings.get_download_gradient_start()/-_mid()/-_end()), fuer das
+    Download-Pulsieren im Leerlauf (siehe _download_monitor_loop()) - kein
+    Tag mit Spiel aufliegend, also keine eigene Farbe zum Pulsieren
+    vorhanden. Interpoliert stueckweise (0-50% zwischen Start/Mitte,
+    50-100% zwischen Mitte/Ende) im HSV-Farbton, siehe _hsv_lerp()."""
+    progress = max(0.0, min(1.0, progress))
+    start = led_settings.get_download_gradient_start()
+    mid = led_settings.get_download_gradient_mid()
+    end = led_settings.get_download_gradient_end()
+    if progress <= 0.5:
+        return _hsv_lerp(start, mid, progress / 0.5)
+    return _hsv_lerp(mid, end, (progress - 0.5) / 0.5)
 
 
 def _scale_color(color, factor):

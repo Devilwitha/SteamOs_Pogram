@@ -160,10 +160,13 @@ Startet einen lokalen Webserver (`http://localhost:8090`, siehe `gui_port`
 in `config.json`) und versucht,
 ihn automatisch im Standardbrowser zu oeffnen (Desktop-Modus) - klappt das
 nicht (z. B. kein Standardbrowser registriert), einfach die Adresse von
-Hand im Browser aufrufen. Das HTML liegt in [`gui/index.html`](gui/index.html)
-(nicht im Python-Code eingebettet); `gui_server.py` fuellt darin nur die
-Platzhalter `__MESSAGE__`/`__ROWS__`/`__TAG_ROWS__`. Angezeigt werden alle
-Spiele aus der Datenbank mit Name, Installationsstatus und UID. Klick auf
+Hand im Browser aufrufen. Ausgeliefert wird dabei standardmaessig das
+[Controller-Einstellungsmenue](#controller-einstellungsmenue--und-verwaltungs-gui-admin)
+(`/`) - die hier beschriebene Tabellen-Ansicht liegt unter `/admin`. Das
+HTML liegt in [`gui/index.html`](gui/index.html) (nicht im Python-Code
+eingebettet); `gui_server.py` fuellt darin nur die Platzhalter
+`__MESSAGE__`/`__ROWS__`/`__TAG_ROWS__`. Angezeigt werden alle Spiele aus
+der Datenbank mit Name, Installationsstatus und UID. Klick auf
 **"An Pico senden"**:
 
 1. sucht den Pico im Netzwerk (oder nutzt die konfigurierte `pico_ip`),
@@ -181,6 +184,112 @@ Root-Dateisystem) - Firefox ist im Desktop-Modus bereits vorinstalliert.
 Nach dem `SELECT`-Schritt muss noch ein Tag an den RC522 gehalten werden -
 erst dann verknuepft der Pico ihn tatsaechlich mit der UID (siehe
 [Pico/README.md](../Pico/README.md)).
+
+### Controller-Einstellungsmenue (`/`) und Verwaltungs-GUI (`/admin`)
+
+Spielstart selbst ist auf SteamOS bereits Aufgabe von **Steam Big Picture**
+- ein zusaetzliches Kachel-Menue dafuer waere redundant. Stattdessen ist
+[`gui/dashboard.html`](gui/dashboard.html) (neue Startseite von
+`gui_server.py`) ein Einstellungsmenue fuer genau das, was Big Picture
+nicht kann: die Hardware-Steuerung dieses Projekts (LEDs, Sound-Modus,
+Sound/Farbe pro Spiel, RFID-Tag-Verknuepfung). Aufgebaut wie ein
+Konsolen-Systemmenue (Kategorien links, Einstellungen rechts) und
+vollstaendig per Tastatur/Maus **oder** per an den PC angeschlossenem
+Controller ueber die
+[Gamepad-Web-API](https://developer.mozilla.org/en-US/docs/Web/API/Gamepad_API)
+bedienbar (kein zusaetzlicher Treiber noetig, sofern der Controller vom
+Browser als Standard-Gamepad erkannt wird - funktioniert zuverlaessig bei
+direktem Aufruf im normalen Desktop-Browser; **fuer den Start aus Big
+Picture heraus siehe stattdessen
+[gui/native_console.py](#als-nicht-steam-spiel-in-big-picture-hinzufuegen)
+weiter unten** - dort liefert die Gamepad-Web-API unter Wayland keine
+zuverlaessigen Events, siehe dort fuer Details):
+
+| Aktion | Tastatur | Controller |
+|---|---|---|
+| Zeile/Kategorie wechseln | Pfeiltasten | D-Pad / linker Stick |
+| Wert aendern (Toggle/Farbe/Modus) | Pfeil links/rechts | D-Pad/Stick links/rechts |
+| Auswaehlen/Umschalten/Untermenue oeffnen | Enter/Leertaste | A |
+| Zurueck | Esc/Backspace | B |
+| Kategorie wechseln (von ueberall) | Q / E | LB / RB |
+
+**Kategorien:** *LEDs* (Sync an/aus, Leerlauf-Farbe, Blinken bei
+Sleep/Shutdown, Download-Pulsieren, Farbverlauf mit frei waehlbaren
+Stuetzfarben bei 0/50/100% Downloadfortschritt), *Sound* (Modus-Umschalter
+`songs`/`boot_sound`/`video`, Test-Wiedergabe), *Spiele* (pro Spiel: Farbe,
+Sound aktiv/inaktiv + Test, "fuer naechsten Tag vormerken" - oeffnet sich
+als Untermenue aus der Spieleliste), *Tags* (verknuepfen/trennen, Farbe,
+loeschen - ebenfalls als Untermenue je Tag), *Werkzeuge* (alle
+Spielfarben zuruecksetzen, mit Inline-Sicherheitsabfrage) und *Info*
+(Softwareversion, Hersteller "BolliSoft", Code von Nico Bollhalder).
+Farben werden
+nicht per echtem Farbwaehler gesetzt (per Gamepad nicht praktikabel
+bedienbar), sondern per fester Palette durchgeschaltet - jede Aenderung
+speichert sofort ueber dieselben JSON-Endpunkte, die auch `/admin`
+verwendet (`/api/set_game_color`, `/api/link_tag`, ...).
+
+Datei-Uploads (neuer Sound/Boot-Video) bleiben bewusst der Tabellen-GUI
+unter `/admin` vorbehalten - ein Datei-Dialog ist per Controller ohnehin
+nicht sinnvoll bedienbar. Erreichbar ueber das Zahnrad-Icon oben rechts im
+Menue bzw. direkt unter `http://localhost:8090/admin`.
+
+### Als Nicht-Steam-Spiel in Big Picture hinzufuegen
+
+Das Controller-Einstellungsmenue laeuft in Big Picture als **natives
+Programm** ([`gui/native_console.py`](gui/native_console.py), gestartet
+ueber den duennen Einstiegspunkt
+[`gui/launch_dashboard.py`](gui/launch_dashboard.py)) statt in einem
+Browser-Kiosk-Fenster. Grund: Chromes/Firefoxs Gamepad-Web-API liefert
+unter Wayland (SteamOS/Bazzite) keine zuverlaessigen Controller-Events,
+sobald die Seite von Steam aus gestartet wird - weder mit noch ohne Steam
+Input (sowohl der Eintrags-Schalter als auch die globalen
+"Xbox/PlayStation/Generic-Konfigurationsunterstuetzung"-Haken wurden
+getestet, ohne Wirkung; nur Steams eigener "Steam-Taste halten"-
+Systemcursor, unabhaengig vom Fenster, funktionierte). `native_console.py`
+liest den Controller stattdessen direkt ueber SDL2 (`pygame-ce`, siehe
+Voraussetzung unten) - dieselbe Eingabe-Schicht, die auch echte native
+Linux-Spiele fuer Controller-Support nutzen, unabhaengig von
+Fenster-Fokus-Weiterleitung durch Compositor/Steam/Browser. Das Backend
+(`gui_server.py`, alle `/api/*`-Routen) ist davon unberuehrt - dasselbe
+`native_console.py` spricht exakt dieselbe JSON-API wie zuvor
+`dashboard.html`.
+
+**Voraussetzung:** `pip install --user pygame-ce` (Version >=2.0 fuer das
+SDL_GameController-API, `pygame._sdl2.controller` - normalisiert auch
+exotischere Controller-Layouts auf ein Standard-Xbox-Layout). Falls
+`pip install --user pygame` mit einem Fehler wie "Unable to run
+sdl-config" fehlschlaegt (kein vorgebautes Wheel fuer die installierte
+Python-Version, Build aus dem Quellcode braucht SDL2-Entwicklungspakete,
+die auf SteamOS/Bazzite ohne `rpm-ostree install` nicht verfuegbar sind):
+`pygame-ce` (https://pyga.me/) ist ein API-kompatibler Fork mit
+aktuelleren vorgebauten Wheels und bringt dieselbe `import pygame`-API
+mit - kein Code-Unterschied, nur ein anderes zu installierendes Paket.
+
+**Einrichtung (einmalig, im Desktop-Modus):**
+
+1. `pip install --user pygame-ce` (siehe oben).
+2. Datei ausfuehrbar machen (falls noch nicht geschehen):
+   `chmod +x steamOs/gui/launch_dashboard.py`.
+3. Im Steam-Client: **Spiele -> Ein Nicht-Steam-Spiel zu meiner Bibliothek
+   hinzufuegen...**, "Durchsuchen" und `steamOs/gui/launch_dashboard.py`
+   auswaehlen.
+4. Den neuen Eintrag umbenennen (z. B. "SteamOS Konsole").
+5. Optional eigenes Vorschaubild: Eintrag in der Bibliothek mit der rechten
+   Maustaste -> **Eigenschaften verwalten -> Benutzerdefinierte Grafiken
+   festlegen...** und
+   [`gui/assets/dashboard_grid.png`](gui/assets/dashboard_grid.png)
+   auswaehlen (600x900, im selben HUD-Look wie das Menue selbst - per
+   `python3 gui/assets/make_grid_art.py` neu erzeugbar, braucht Pillow).
+6. In den Game Mode/Big Picture wechseln - der Eintrag erscheint in der
+   Bibliothek wie ein Spiel.
+
+**Bedienung:** D-Pad/linker Stick zum Navigieren, `A` waehlt/schaltet um,
+`B` geht zurueck, `LB`/`RB` wechseln die Kategorie, `B` ca. 1s halten
+beendet das Programm (Big Picture kehrt danach zur Bibliothek zurueck).
+Tastatur (Pfeile/Enter/Escape/Q/E) und Maus (Klick auf eine Zeile bzw. auf
+die `‹`/`›`-Pfeile bei Farb-/Modus-Zeilen) funktionieren zusaetzlich -
+nuetzlich zum Testen ohne Controller, z. B. direkt per
+`python3 steamOs/gui/launch_dashboard.py` im Desktop-Modus.
 
 ### Farbe pro Spiel/Tag (fuer den Led_Pico)
 

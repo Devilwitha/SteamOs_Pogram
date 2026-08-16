@@ -1,0 +1,928 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SteamOS Konsole</title>
+<style>
+:root{
+  color-scheme:dark;
+  --bg:#080b10;
+  --panel:#11151d;
+  --panel2:#161c27;
+  --border:#232c3d;
+  --cyan:#00e5ff;
+  --cyan-dim:#0891a8;
+  --magenta:#ff2e97;
+  --green:#39ff8c;
+  --amber:#ffb238;
+  --red:#ff4d6d;
+  --text:#e8edf5;
+  --dim:#7686a0;
+}
+*{box-sizing:border-box}
+html,body{margin:0;padding:0;height:100%}
+body{
+  min-height:100vh;
+  font-family:"Segoe UI",Roboto,-apple-system,sans-serif;
+  color:var(--text);
+  background:
+    radial-gradient(circle at 12% -10%,rgba(0,229,255,.12),transparent 40%),
+    radial-gradient(circle at 90% 110%,rgba(255,46,151,.10),transparent 40%),
+    repeating-linear-gradient(rgba(255,255,255,.025) 0 1px,transparent 1px 26px),
+    repeating-linear-gradient(90deg,rgba(255,255,255,.025) 0 1px,transparent 1px 26px),
+    var(--bg);
+  display:flex;flex-direction:column;
+  overflow:hidden;
+  position:relative;
+}
+/* Sanfte Vignette - schwaecht die Ecken ab, gibt dem HUD mehr Tiefe/
+   "auf einem Bildschirm"-Gefuehl, ohne die Lesbarkeit zu stoeren. */
+body::after{
+  content:"";position:fixed;inset:0;pointer-events:none;z-index:5;
+  background:radial-gradient(ellipse at center,transparent 55%,rgba(0,0,0,.38) 100%);
+}
+
+.topbar{
+  display:flex;align-items:center;gap:18px;
+  padding:16px 26px;
+  border-bottom:1px solid var(--border);
+  flex-shrink:0;
+}
+.topbar h1{
+  font-size:1.15rem;font-weight:700;letter-spacing:.14em;text-transform:uppercase;
+  margin:0;padding-left:12px;border-left:4px solid var(--cyan);
+  white-space:nowrap;
+}
+.topbar h1 span{color:var(--cyan-dim)}
+.topbar-spacer{flex:1;min-width:0}
+
+.download-bar{
+  display:none;align-items:center;gap:10px;
+  font-size:.78rem;color:var(--dim);margin-right:6px;
+}
+.download-track{
+  width:200px;height:6px;border-radius:3px;
+  background:rgba(255,255,255,.08);overflow:hidden;
+}
+.download-fill{
+  height:100%;width:0;background:linear-gradient(90deg,var(--cyan-dim),var(--cyan));
+  transition:width .4s ease;
+}
+.download-label{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:180px}
+
+.clock{
+  font-variant-numeric:tabular-nums;font-size:1rem;font-weight:600;
+  color:var(--text);letter-spacing:.04em;margin-right:6px;white-space:nowrap;
+}
+.clock small{display:block;font-size:.62rem;font-weight:400;color:var(--dim);letter-spacing:.08em;text-transform:uppercase}
+
+.admin-link{
+  flex-shrink:0;
+  display:flex;align-items:center;justify-content:center;
+  width:36px;height:36px;border-radius:50%;
+  background:var(--panel2);border:1px solid var(--border);
+  color:var(--dim);text-decoration:none;font-size:1.05rem;
+  transition:color .15s,border-color .15s;
+}
+.admin-link:hover,.admin-link:focus{color:var(--cyan);border-color:var(--cyan-dim)}
+
+.layout{flex:1;min-height:0;display:flex}
+
+.sidebar{width:230px;flex-shrink:0;overflow-y:auto;padding:16px 0;border-right:1px solid var(--border);position:relative}
+.cat-highlight{
+  position:absolute;left:0;right:0;top:0;height:0;
+  background:rgba(0,229,255,.07);border-left:3px solid var(--cyan);
+  transition:transform .18s cubic-bezier(.3,.9,.4,1),height .18s ease,opacity .15s ease;
+  pointer-events:none;opacity:0;z-index:0;
+}
+.cat-highlight.show{opacity:1}
+.cat-items{position:relative;z-index:1}
+.cat{
+  display:flex;align-items:center;gap:12px;
+  padding:12px 22px;font-size:.94rem;font-weight:600;letter-spacing:.01em;
+  color:var(--dim);cursor:pointer;
+  transition:color .12s;
+}
+.cat svg{width:20px;height:20px;flex-shrink:0;opacity:.75;transition:opacity .12s}
+.cat.current{color:var(--text)}
+.cat.current svg{opacity:1}
+.cat.current.focused{color:var(--cyan)}
+.cat.current.focused svg{color:var(--cyan)}
+
+.content{flex:1;overflow-y:auto;padding:22px 30px 96px}
+
+.content-header{
+  display:flex;align-items:center;gap:14px;
+  margin-bottom:20px;padding-bottom:14px;border-bottom:1px solid var(--border);
+}
+.content-header svg{width:26px;height:26px;color:var(--cyan);flex-shrink:0}
+.content-header h2{margin:0;font-size:1.3rem;font-weight:700;letter-spacing:.03em}
+
+@keyframes rowIn{from{opacity:0;transform:translateY(5px)}to{opacity:1;transform:translateY(0)}}
+
+.row{
+  display:flex;align-items:center;justify-content:space-between;gap:16px;
+  padding:15px 18px;border-radius:9px;margin-bottom:9px;
+  background:var(--panel);border:1px solid var(--border);
+  cursor:pointer;transition:border-color .12s,background .12s;
+  animation:rowIn .18s ease both;
+}
+.row.focused{border-color:var(--cyan);box-shadow:0 0 0 1px var(--cyan-dim),0 6px 20px rgba(0,229,255,.08);background:var(--panel2)}
+.row.info{color:var(--dim);background:none;border:none;padding:10px 4px;cursor:default;font-size:.86rem}
+.row.row-stat{cursor:default}
+.row.row-dim{opacity:.6}
+.row-main{display:flex;align-items:center;gap:12px;min-width:0}
+.row-text{min-width:0}
+.row-label{font-weight:600;font-size:.96rem;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.row-subtext{font-size:.76rem;color:var(--dim);margin-top:3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.row-badge{
+  margin-left:8px;font-size:.58rem;font-weight:700;letter-spacing:.03em;text-transform:uppercase;
+  padding:2px 6px;border-radius:4px;
+  background:rgba(255,178,56,.15);color:var(--amber);border:1px solid rgba(255,178,56,.4);
+}
+.row-value{display:flex;align-items:center;gap:8px;font-size:.84rem;color:var(--dim);flex-shrink:0}
+.row-value.on{color:var(--green)}
+.row-value.off{color:var(--dim)}
+.row-stat .row-value{color:var(--cyan-dim);font-weight:600}
+.swatch{width:16px;height:16px;border-radius:4px;border:1px solid rgba(255,255,255,.25);flex-shrink:0}
+.cycle-btn{
+  background:var(--panel2);border:1px solid var(--border);color:var(--text);
+  width:28px;height:28px;border-radius:7px;font-size:1rem;line-height:1;padding:0;
+  cursor:pointer;display:inline-flex;align-items:center;justify-content:center;flex-shrink:0;
+  transition:border-color .12s,color .12s;
+}
+.cycle-btn:hover,.cycle-btn:focus{border-color:var(--cyan-dim);color:var(--cyan)}
+
+.submenu-backdrop{
+  position:fixed;inset:0;background:rgba(4,6,10,.72);
+  display:none;align-items:center;justify-content:center;z-index:10;padding:20px;
+}
+.submenu-backdrop.show{display:flex}
+.submenu-card{
+  width:min(480px,100%);max-height:80vh;overflow-y:auto;
+  background:var(--panel2);border:1px solid var(--border);border-radius:12px;padding:18px;
+  box-shadow:0 20px 60px rgba(0,0,0,.6);
+}
+.submenu-card h3{
+  margin:0 0 14px;font-size:.82rem;text-transform:uppercase;letter-spacing:.05em;color:var(--cyan);
+}
+
+.hints{
+  flex-shrink:0;padding:11px 26px 15px;text-align:center;
+  font-size:.76rem;color:var(--dim);letter-spacing:.02em;
+}
+.hints kbd{
+  background:var(--panel2);border:1px solid var(--border);border-radius:4px;
+  padding:1px 6px;font-family:inherit;color:var(--text);
+}
+.btn-glyph{
+  display:inline-flex;align-items:center;justify-content:center;
+  min-width:20px;height:20px;padding:0 5px;border-radius:50%;
+  font-size:.68rem;font-weight:800;line-height:1;
+  border:1px solid rgba(255,255,255,.25);vertical-align:-4px;
+}
+.btn-a{background:rgba(57,255,140,.16);color:var(--green);border-color:rgba(57,255,140,.4)}
+.btn-b{background:rgba(255,77,109,.16);color:var(--red);border-color:rgba(255,77,109,.4)}
+.btn-shoulder{background:rgba(0,229,255,.14);color:var(--cyan);border-color:rgba(0,229,255,.4);border-radius:6px}
+
+.toast{
+  position:fixed;left:50%;bottom:74px;transform:translate(-50%,20px);
+  padding:10px 20px;border-radius:8px;
+  background:var(--panel2);border:1px solid var(--border);
+  font-size:.85rem;opacity:0;pointer-events:none;
+  transition:opacity .2s,transform .2s;
+  max-width:80vw;text-align:center;z-index:20;
+}
+.toast.show{opacity:1;transform:translate(-50%,0)}
+.toast.error{border-color:rgba(255,77,109,.5);color:var(--red)}
+</style>
+</head>
+<body>
+  <div class="topbar">
+    <h1><span>STEAMOS</span> Konsole</h1>
+    <div class="topbar-spacer"></div>
+    <div class="download-bar" id="download-bar">
+      <div class="download-track"><div class="download-fill" id="download-fill"></div></div>
+      <span class="download-label" id="download-label"></span>
+    </div>
+    <div class="clock" id="clock"></div>
+    <a class="admin-link" href="/admin" title="Erweitert (Uploads, Tag-Tabelle)">&#9881;</a>
+  </div>
+
+  <div class="layout">
+    <div class="sidebar" id="sidebar">
+      <div class="cat-highlight" id="cat-highlight"></div>
+      <div class="cat-items" id="cat-items"></div>
+    </div>
+    <div class="content" id="content"></div>
+  </div>
+
+  <div class="hints" id="hints"></div>
+
+  <div class="submenu-backdrop" id="submenu-backdrop"></div>
+  <div class="toast" id="toast"></div>
+
+<script>
+// -- Konfiguration --------------------------------------------------------
+const ICONS = {
+  leds: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="12" cy="10" r="6"/><line x1="9.5" y1="19" x2="14.5" y2="19"/><line x1="10.3" y1="21.5" x2="13.7" y2="21.5"/></svg>',
+  sound: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><polygon points="4,9 8,9 13,5 13,19 8,15 4,15" fill="currentColor" stroke="none"/><path d="M16.5 8.5a5 5 0 0 1 0 7"/><path d="M19 6a8.5 8.5 0 0 1 0 12"/></svg>',
+  games: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><rect x="2.5" y="8" width="19" height="10" rx="5"/><line x1="7" y1="11.2" x2="7" y2="14.8"/><line x1="5.2" y1="13" x2="8.8" y2="13"/><circle cx="16" cy="11.5" r="1" fill="currentColor" stroke="none"/><circle cx="18.5" cy="14" r="1" fill="currentColor" stroke="none"/></svg>',
+  tags: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"><polygon points="3,12 11,4 20,4 20,13 12,21"/><circle cx="16" cy="8" r="1.3" fill="currentColor" stroke="none"/></svg>',
+  tools: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><g transform="rotate(45 12 12)"><circle cx="7" cy="7" r="3.2"/><line x1="9.3" y1="9.3" x2="18" y2="18"/><rect x="16" y="16" width="5" height="3.2" rx="1"/></g></svg>',
+  info: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><line x1="12" y1="11" x2="12" y2="16.5"/><circle cx="12" cy="7.5" r="1.1" fill="currentColor" stroke="none"/></svg>',
+};
+
+const CATEGORIES = [
+  { id: 'leds', label: 'LEDs' },
+  { id: 'sound', label: 'Sound' },
+  { id: 'games', label: 'Spiele' },
+  { id: 'tags', label: 'Tags' },
+  { id: 'tools', label: 'Werkzeuge' },
+  { id: 'info', label: 'Info' },
+];
+
+// Feste Palette statt echtem Farbwaehler - per Controller (Links/Rechts)
+// zuverlaessig bedienbar, ohne Analogstick-Zeiger. Ein individueller Wert
+// (z. B. per /admin gesetzt) faellt beim ersten Druck auf Index 0 zurueck.
+const PALETTE = [
+  '#ff4d6d', '#ff8800', '#ffb238', '#ffe14d', '#39ff8c', '#00e5ff',
+  '#0891a8', '#3b82f6', '#7c5cff', '#ff2e97', '#ffffff', '#7686a0',
+];
+
+const AUDIO_MODES = ['songs', 'boot_sound', 'video'];
+const AUDIO_MODE_LABELS = {
+  songs: 'Einzelne Songs je Spiel',
+  boot_sound: 'Ein Boot-Sound fuer alle Spiele',
+  video: 'Ein Video (Vollbild) fuer alle Spiele',
+};
+
+// -- Zustand ----------------------------------------------------------------
+let state = null;
+let focusZone = 'sidebar'; // 'sidebar' | 'content'
+let categoryIndex = 0;
+let contentIndex = 0;
+let submenuStack = []; // [{title, items, index}]
+let toolsConfirmArmed = false;
+
+// -- Backend-Aufrufe ----------------------------------------------------
+async function api(path, body) {
+  try {
+    const res = await fetch(path, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body || {}),
+    });
+    return await res.json();
+  } catch (e) {
+    return { ok: false, message: 'Server nicht erreichbar.' };
+  }
+}
+
+async function loadState() {
+  try {
+    const res = await fetch('/api/state');
+    state = await res.json();
+    renderAll();
+  } catch (e) {
+    // Server kurz nicht erreichbar - naechster Poll (5s) versucht es erneut.
+  }
+}
+
+// -- Zeilen-Bausteine -----------------------------------------------------
+// Jede Kategorie liefert eine Liste solcher Zeilen-Objekte; rowElement()
+// unten rendert sie generisch, dispatch() bedient sie generisch (up/down/
+// left/right/a/b) - neue Einstellungen brauchen dadurch nur eine neue
+// Zeile, keine neue Navigationslogik.
+
+function toggleRow(label, value, setter) {
+  return {
+    type: 'toggle',
+    label,
+    value: () => value,
+    onActivate: async () => {
+      const r = await setter(!value);
+      toast(r.message, r.ok);
+      loadState();
+    },
+  };
+}
+
+function colorRow(label, color, setter) {
+  return {
+    type: 'color',
+    label,
+    color: () => color || '#7686a0',
+    hint: () => (color || '#7686a0').toUpperCase(),
+    onCycle: async (dir) => {
+      const idx = PALETTE.indexOf((color || '').toLowerCase());
+      const next = PALETTE[idx < 0 ? 0 : (idx + dir + PALETTE.length) % PALETTE.length];
+      const r = await setter(next);
+      toast(r.message, r.ok);
+      loadState();
+    },
+  };
+}
+
+function enumRow(label, value, options, labelFn, setter) {
+  async function set(next) {
+    const r = await setter(next);
+    toast(r.message, r.ok);
+    loadState();
+  }
+  return {
+    type: 'enum',
+    label,
+    hint: () => labelFn(value),
+    onCycle: (dir) => {
+      const idx = options.indexOf(value);
+      set(options[(idx < 0 ? 0 : idx + dir + options.length) % options.length]);
+    },
+    onActivate: () => {
+      const idx = options.indexOf(value);
+      set(options[(idx + 1) % options.length]);
+    },
+  };
+}
+
+function buttonRow(label, action) {
+  return {
+    type: 'button',
+    label,
+    onActivate: async () => {
+      const r = await action();
+      if (r && typeof r === 'object' && 'ok' in r) {
+        toast(r.message, r.ok);
+        loadState();
+      }
+    },
+  };
+}
+
+function infoRow(label) {
+  return { type: 'info', label };
+}
+
+function statRow(label, value) {
+  return { type: 'stat', label, hint: () => value };
+}
+
+// -- Kategorien -------------------------------------------------------------
+function ledsRows() {
+  return [
+    toggleRow('LED-Synchronisation', state.led_enabled, v => api('/api/set_led_enabled', { enabled: v })),
+    colorRow('Leerlauf-Farbe ("Konsole an")', state.idle_led_color, c => api('/api/set_idle_led_color', { color: c })),
+    toggleRow('Blinken bei Sleep/Shutdown', state.blink_on_sleep, v => api('/api/set_blink_on_sleep', { enabled: v })),
+    toggleRow('Download-Pulsieren', state.download_pulse, v => api('/api/set_download_pulse', { enabled: v })),
+    toggleRow('Farbverlauf im Leerlauf', state.download_gradient_enabled, v => api('/api/set_download_gradient_enabled', { enabled: v })),
+    colorRow('Verlauf-Startfarbe (0%)', state.download_gradient_start, c => api('/api/set_download_gradient_start', { color: c })),
+    colorRow('Verlauf-Mittelfarbe (50%)', state.download_gradient_mid, c => api('/api/set_download_gradient_mid', { color: c })),
+    colorRow('Verlauf-Endfarbe (100%)', state.download_gradient_end, c => api('/api/set_download_gradient_end', { color: c })),
+  ];
+}
+
+function soundRows() {
+  const rows = [
+    enumRow('Sound-Modus', state.audio_mode, AUDIO_MODES, m => AUDIO_MODE_LABELS[m] || m,
+      mode => api('/api/set_audio_mode', { mode })),
+  ];
+  if (state.audio_mode === 'boot_sound') {
+    if (state.has_boot_sound) {
+      rows.push(buttonRow('▶ Boot-Sound abspielen (' + state.boot_sound_name + ')', () => api('/api/play_boot_sound', {})));
+      rows.push(buttonRow('■ Wiedergabe stoppen', () => api('/api/stop_boot_sound', {})));
+    } else {
+      rows.push(infoRow('Kein Boot-Sound hinterlegt - Upload unter /admin.'));
+    }
+  } else if (state.audio_mode === 'video') {
+    if (state.has_video) {
+      rows.push(buttonRow('▶ Video abspielen (' + state.video_name + ')', () => api('/api/play_video', {})));
+      rows.push(buttonRow('■ Wiedergabe stoppen', () => api('/api/stop_video', {})));
+    } else {
+      rows.push(infoRow('Kein Video hinterlegt - Upload unter /admin.'));
+    }
+  } else {
+    rows.push(infoRow('Sound pro Spiel: siehe Kategorie "Spiele".'));
+  }
+  return rows;
+}
+
+function gamesRows() {
+  if (!state.games.length) {
+    return [infoRow('Keine Spiele gefunden. Zuerst game_scanner.py ausführen.')];
+  }
+  return state.games.map(g => ({
+    type: 'list-item',
+    label: g.name,
+    color: () => g.color || '#7686a0',
+    badge: () => (g.installed ? null : 'nicht installiert'),
+    subtext: () => (g.has_audio ? 'Sound: ' + (g.audio_enabled ? 'aktiv' : 'inaktiv') : 'Kein Sound'),
+    onActivate: () => openGameActions(g),
+  }));
+}
+
+function openGameActions(game) {
+  const items = [
+    colorRow('Farbe', game.color, c => api('/api/set_game_color', { uid: game.uid, color: c })),
+  ];
+  if (game.has_audio) {
+    items.push(toggleRow(
+      game.audio_enabled ? 'Sound: Aktiv' : 'Sound: Inaktiv',
+      game.audio_enabled,
+      v => api('/api/toggle_game_audio', { uid: game.uid, enabled: v }),
+    ));
+    items.push(buttonRow('▶ Sound testen', () => api('/api/play_game_audio', { uid: game.uid })));
+    items.push(buttonRow('■ Wiedergabe stoppen', () => api('/api/stop_game_audio', {})));
+  } else {
+    items.push(infoRow('Kein Sound hinterlegt - Upload unter /admin.'));
+  }
+  items.push(buttonRow('Für nächsten Tag vormerken', () => api('/api/select_game', { uid: game.uid })));
+  openSubmenu('Spiel: ' + game.name, items);
+}
+
+function shortUid(uid) {
+  return uid.length > 14 ? uid.slice(0, 6) + '…' + uid.slice(-4) : uid;
+}
+
+function tagsRows() {
+  if (!state.tags.length) {
+    return [infoRow('Noch keine Tags erkannt. Einen Tag an den RC522 halten.')];
+  }
+  const gameNames = Object.fromEntries(state.games.map(g => [g.uid, g.name]));
+  return state.tags.map(t => ({
+    type: 'list-item',
+    label: shortUid(t.uid),
+    color: () => t.color || '#7686a0',
+    subtext: () => (t.game_uid ? '→ ' + (gameNames[t.game_uid] || t.game_uid) : 'nicht verknüpft'),
+    onActivate: () => openTagActions(t),
+  }));
+}
+
+function openTagActions(tag) {
+  const items = [
+    buttonRow('Verknüpfen mit...', () => { openGamePicker(tag); }),
+  ];
+  if (tag.game_uid) {
+    items.push(buttonRow('Trennen', () => api('/api/unlink_tag', { uid: tag.uid })));
+  }
+  items.push(colorRow('Farbe', tag.color, c => api('/api/set_tag_color', { uid: tag.uid, color: c })));
+  items.push(buttonRow('Löschen...', async () => {
+    const r = await api('/api/forget_tag', {});
+    closeSubmenu();
+    return {
+      ok: r.ok,
+      message: r.ok ? 'Löschmodus aktiv - jetzt den Tag an den RC522 halten.' : r.message,
+    };
+  }));
+  openSubmenu('Tag: ' + shortUid(tag.uid), items);
+}
+
+function openGamePicker(tag) {
+  if (!state.games.length) {
+    openSubmenu('Verknüpfen: ' + shortUid(tag.uid), [infoRow('Keine Spiele in der Datenbank.')]);
+    return;
+  }
+  const items = state.games.map(g => buttonRow(g.name, async () => {
+    const r = await api('/api/link_tag', { uid: tag.uid, game_uid: g.uid });
+    closeSubmenu(); // Auswahlliste
+    closeSubmenu(); // Tag-Aktionsmenue - zurueck zur Tag-Liste
+    return r;
+  }));
+  openSubmenu('Verknüpfen: ' + shortUid(tag.uid), items);
+}
+
+function toolsRows() {
+  return [{
+    type: 'button',
+    label: toolsConfirmArmed
+      ? 'Wirklich ALLE Spielfarben zurücksetzen? (A = Ja)'
+      : 'Farben zurücksetzen...',
+    onActivate: async () => {
+      if (!toolsConfirmArmed) {
+        toolsConfirmArmed = true;
+        renderAll();
+        return;
+      }
+      toolsConfirmArmed = false;
+      const r = await api('/api/reset_all_colors', {});
+      toast(r.message, r.ok);
+      loadState();
+    },
+  }];
+}
+
+function infoRows() {
+  return [
+    statRow('Version', state.app_version || '–'),
+    statRow('Hersteller', 'BolliSoft'),
+    statRow('Code', 'Nico Bollhalder'),
+  ];
+}
+
+const CATEGORY_ROWS = {
+  leds: ledsRows,
+  sound: soundRows,
+  games: gamesRows,
+  tags: tagsRows,
+  tools: toolsRows,
+  info: infoRows,
+};
+
+// -- Navigation ---------------------------------------------------------
+function currentRows() {
+  if (submenuStack.length) return submenuStack[submenuStack.length - 1].items;
+  if (!state) return [];
+  return CATEGORY_ROWS[CATEGORIES[categoryIndex].id]();
+}
+
+function activeIndex() {
+  if (submenuStack.length) return submenuStack[submenuStack.length - 1].index;
+  return contentIndex;
+}
+
+function setActiveIndex(i) {
+  const rows = currentRows();
+  const clamped = rows.length ? Math.max(0, Math.min(rows.length - 1, i)) : 0;
+  if (submenuStack.length) submenuStack[submenuStack.length - 1].index = clamped;
+  else contentIndex = clamped;
+}
+
+function openSubmenu(title, items) {
+  submenuStack.push({ title, items, index: 0 });
+  renderAll();
+}
+
+function closeSubmenu() {
+  submenuStack.pop();
+  renderAll();
+}
+
+function leaveToSidebarOrCloseSubmenu() {
+  if (submenuStack.length) {
+    closeSubmenu();
+  } else {
+    focusZone = 'sidebar';
+    toolsConfirmArmed = false;
+    renderAll();
+  }
+}
+
+function changeCategory(dir) {
+  categoryIndex = (categoryIndex + dir + CATEGORIES.length) % CATEGORIES.length;
+  contentIndex = 0;
+  submenuStack = [];
+  toolsConfirmArmed = false;
+  focusZone = 'content';
+  renderAll();
+}
+
+function dispatch(action) {
+  if (!state) return;
+  if (action === 'lb') { changeCategory(-1); return; }
+  if (action === 'rb') { changeCategory(1); return; }
+
+  if (focusZone === 'sidebar' && !submenuStack.length) {
+    if (action === 'up') { categoryIndex = (categoryIndex - 1 + CATEGORIES.length) % CATEGORIES.length; contentIndex = 0; renderAll(); }
+    else if (action === 'down') { categoryIndex = (categoryIndex + 1) % CATEGORIES.length; contentIndex = 0; renderAll(); }
+    else if (action === 'right' || action === 'a') { focusZone = 'content'; renderAll(); }
+    return;
+  }
+
+  const rows = currentRows();
+  if (!rows.length) {
+    if (action === 'left' || action === 'b') leaveToSidebarOrCloseSubmenu();
+    return;
+  }
+  const idx = activeIndex();
+  const row = rows[idx];
+  if (action === 'up') { setActiveIndex(idx - 1); renderAll(); }
+  else if (action === 'down') { setActiveIndex(idx + 1); renderAll(); }
+  else if (action === 'left') {
+    if (row.onCycle) { row.onCycle(-1); }
+    else if (!submenuStack.length) { focusZone = 'sidebar'; renderAll(); }
+  } else if (action === 'right') {
+    if (row.onCycle) row.onCycle(1);
+  } else if (action === 'a') {
+    if (row.onActivate) row.onActivate();
+  } else if (action === 'b') {
+    leaveToSidebarOrCloseSubmenu();
+  }
+}
+
+// -- Rendering ------------------------------------------------------------
+// Eigene <, >-Schaltflaechen fuer Farb-/Modus-Zeilen: Steams "Desktop-
+// Konfiguration" (Standardverhalten fuer Nicht-Steam-Verknuepfungen ohne
+// eigenes Controller-Layout) bildet den Controller auf einen virtuellen
+// Mauszeiger + Klick ab, nicht auf Pfeiltasten - ohne eigene Klickflaeche
+// waeren diese Zeilen dann per Controller aus Big Picture gar nicht
+// bedienbar, nur per echter Tastatur/echtem Gamepad-API-Objekt.
+function cycleButton(label, onClick) {
+  const btn = document.createElement('button');
+  btn.type = 'button';
+  btn.className = 'cycle-btn';
+  btn.textContent = label;
+  btn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    onClick();
+  });
+  return btn;
+}
+
+function rowElement(row, focused) {
+  const el = document.createElement('div');
+  el.className = 'row row-' + row.type + (focused ? ' focused' : '');
+
+  if (row.type === 'info') {
+    el.textContent = row.label;
+    return el;
+  }
+
+  if (row.badge && row.badge()) el.classList.add('row-dim');
+
+  const main = document.createElement('div');
+  main.className = 'row-main';
+
+  if (row.type === 'list-item' && row.color) {
+    const swatch = document.createElement('span');
+    swatch.className = 'swatch';
+    swatch.style.background = row.color();
+    main.appendChild(swatch);
+  }
+
+  const textWrap = document.createElement('div');
+  textWrap.className = 'row-text';
+  const label = document.createElement('div');
+  label.className = 'row-label';
+  label.textContent = row.label;
+  if (row.badge && row.badge()) {
+    const badge = document.createElement('span');
+    badge.className = 'row-badge';
+    badge.textContent = row.badge();
+    label.appendChild(badge);
+  }
+  textWrap.appendChild(label);
+  if (row.subtext) {
+    const sub = document.createElement('div');
+    sub.className = 'row-subtext';
+    sub.textContent = row.subtext();
+    textWrap.appendChild(sub);
+  }
+  main.appendChild(textWrap);
+  el.appendChild(main);
+
+  const value = document.createElement('div');
+  value.className = 'row-value';
+  if (row.type === 'toggle') {
+    value.classList.add(row.value() ? 'on' : 'off');
+    value.textContent = row.value() ? 'An' : 'Aus';
+  } else if (row.type === 'color') {
+    value.appendChild(cycleButton('‹', () => row.onCycle(-1)));
+    const swatch = document.createElement('span');
+    swatch.className = 'swatch';
+    swatch.style.background = row.color();
+    value.appendChild(swatch);
+    value.appendChild(document.createTextNode(row.hint()));
+    value.appendChild(cycleButton('›', () => row.onCycle(1)));
+  } else if (row.type === 'enum') {
+    value.appendChild(cycleButton('‹', () => row.onCycle(-1)));
+    value.appendChild(document.createTextNode(row.hint()));
+    value.appendChild(cycleButton('›', () => row.onCycle(1)));
+  } else if (row.type === 'stat') {
+    value.textContent = row.hint();
+  } else if (row.type === 'button' || row.type === 'list-item') {
+    value.textContent = '›';
+  }
+  el.appendChild(value);
+
+  el.addEventListener('click', () => { if (row.onActivate) row.onActivate(); });
+  return el;
+}
+
+function renderSidebar() {
+  const el = document.getElementById('cat-items');
+  el.innerHTML = '';
+  CATEGORIES.forEach((cat, i) => {
+    const item = document.createElement('div');
+    const isCurrent = i === categoryIndex;
+    const isFocused = isCurrent && focusZone === 'sidebar' && !submenuStack.length;
+    item.className = 'cat' + (isCurrent ? ' current' : '') + (isFocused ? ' focused' : '');
+    item.innerHTML = ICONS[cat.id] || '';
+    const labelSpan = document.createElement('span');
+    labelSpan.textContent = cat.label;
+    item.appendChild(labelSpan);
+    item.addEventListener('click', () => {
+      categoryIndex = i;
+      contentIndex = 0;
+      submenuStack = [];
+      toolsConfirmArmed = false;
+      focusZone = 'content';
+      renderAll();
+    });
+    el.appendChild(item);
+  });
+
+  const highlight = document.getElementById('cat-highlight');
+  const focusedEl = el.children[categoryIndex];
+  const showHighlight = focusZone === 'sidebar' && !submenuStack.length && focusedEl;
+  if (showHighlight) {
+    highlight.classList.add('show');
+    highlight.style.transform = 'translateY(' + focusedEl.offsetTop + 'px)';
+    highlight.style.height = focusedEl.offsetHeight + 'px';
+  } else {
+    highlight.classList.remove('show');
+  }
+}
+
+function renderContent() {
+  const el = document.getElementById('content');
+  el.innerHTML = '';
+
+  const cat = CATEGORIES[categoryIndex];
+  const header = document.createElement('div');
+  header.className = 'content-header';
+  header.innerHTML = ICONS[cat.id] || '';
+  const h2 = document.createElement('h2');
+  h2.textContent = cat.label;
+  header.appendChild(h2);
+  el.appendChild(header);
+
+  if (!state) {
+    el.appendChild(rowElement(infoRow('Lade…'), false));
+    return;
+  }
+  const rows = CATEGORY_ROWS[cat.id]();
+  if (contentIndex >= rows.length) contentIndex = Math.max(0, rows.length - 1);
+  rows.forEach((row, i) => {
+    const focused = !submenuStack.length && focusZone === 'content' && i === contentIndex;
+    const rowEl = rowElement(row, focused);
+    el.appendChild(rowEl);
+    if (focused) rowEl.scrollIntoView({ block: 'nearest' });
+  });
+}
+
+function renderSubmenu() {
+  const backdrop = document.getElementById('submenu-backdrop');
+  if (!submenuStack.length) {
+    backdrop.classList.remove('show');
+    backdrop.innerHTML = '';
+    return;
+  }
+  const top = submenuStack[submenuStack.length - 1];
+  if (top.index >= top.items.length) top.index = Math.max(0, top.items.length - 1);
+
+  backdrop.classList.add('show');
+  backdrop.innerHTML = '';
+  const card = document.createElement('div');
+  card.className = 'submenu-card';
+  const h3 = document.createElement('h3');
+  h3.textContent = top.title;
+  card.appendChild(h3);
+  top.items.forEach((row, i) => {
+    const focused = i === top.index;
+    const rowEl = rowElement(row, focused);
+    card.appendChild(rowEl);
+    if (focused) rowEl.scrollIntoView({ block: 'nearest' });
+  });
+  backdrop.appendChild(card);
+}
+
+function renderHints() {
+  const el = document.getElementById('hints');
+  const A = '<span class="btn-glyph btn-a">A</span>';
+  const B = '<span class="btn-glyph btn-b">B</span>';
+  const LB = '<span class="btn-glyph btn-shoulder">LB</span>';
+  const RB = '<span class="btn-glyph btn-shoulder">RB</span>';
+  if (submenuStack.length) {
+    el.innerHTML = '<kbd>↑↓</kbd> Navigieren · <kbd>Enter</kbd>/' + A + ' Wählen · <kbd>Esc</kbd>/' + B + ' Zurück';
+  } else if (focusZone === 'sidebar') {
+    el.innerHTML = '<kbd>↑↓</kbd> Kategorie · <kbd>→</kbd>/' + A + ' Öffnen · <kbd>Q</kbd>' + LB + ' / <kbd>E</kbd>' + RB + ' Kategorie wechseln';
+  } else {
+    el.innerHTML = '<kbd>↑↓</kbd> Navigieren · <kbd>←→</kbd> Wert ändern · <kbd>Enter</kbd>/' + A + ' Auswählen · <kbd>Esc</kbd>/' + B + ' Zurück · <kbd>Q</kbd>' + LB + ' / <kbd>E</kbd>' + RB + ' Kategorie';
+  }
+}
+
+function renderDownloadBar() {
+  const bar = document.getElementById('download-bar');
+  if (state && state.download_active && state.download_progress != null) {
+    bar.style.display = 'flex';
+    const pct = Math.round(Math.max(0, Math.min(1, state.download_progress)) * 100);
+    document.getElementById('download-fill').style.width = pct + '%';
+    document.getElementById('download-label').textContent = (state.download_name || 'Download') + ' · ' + pct + '%';
+  } else {
+    bar.style.display = 'none';
+  }
+}
+
+function renderClock() {
+  const el = document.getElementById('clock');
+  const now = new Date();
+  const time = now.toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' });
+  const date = now.toLocaleDateString('de-DE', { weekday: 'short', day: '2-digit', month: '2-digit' });
+  el.innerHTML = time + '<small>' + date + '</small>';
+}
+
+function renderAll() {
+  renderSidebar();
+  renderContent();
+  renderSubmenu();
+  renderHints();
+  renderDownloadBar();
+}
+
+let toastTimer = null;
+function toast(message, ok) {
+  const el = document.getElementById('toast');
+  el.textContent = message;
+  el.className = 'toast show' + (ok === false ? ' error' : '');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => el.classList.remove('show'), 2600);
+}
+
+document.getElementById('submenu-backdrop').addEventListener('click', (e) => {
+  if (e.target.id === 'submenu-backdrop') closeSubmenu();
+});
+
+// -- Tastatur ---------------------------------------------------------------
+const KEY_MAP = {
+  ArrowUp: 'up', ArrowDown: 'down', ArrowLeft: 'left', ArrowRight: 'right',
+  Enter: 'a', ' ': 'a',
+  Escape: 'b', Backspace: 'b',
+  q: 'lb', Q: 'lb', e: 'rb', E: 'rb',
+};
+document.addEventListener('keydown', (e) => {
+  const action = KEY_MAP[e.key];
+  if (!action) return;
+  e.preventDefault();
+  dispatch(action);
+});
+
+// -- Gamepad ------------------------------------------------------------
+// D-Pad (Buttons 12-15) + linker Stick (Achsen 0/1), mit Anfangs-
+// verzoegerung + Wiederholrate (sonst springt ein gehaltener Stick bei
+// 60fps viel zu schnell durch die Liste). A (0) = auswaehlen/umschalten,
+// B (1) = zurueck, LB/RB (4/5) = Kategorie wechseln.
+const GP_DEADZONE = 0.5;
+const GP_REPEAT_DELAY = 300;
+const GP_REPEAT_RATE = 130;
+const gpState = { lastDir: null, lastMoveTime: 0, firstRepeatDone: false, buttonsDown: new Set() };
+
+function gpDirection(pad) {
+  const dpadLeft = pad.buttons[14] && pad.buttons[14].pressed;
+  const dpadRight = pad.buttons[15] && pad.buttons[15].pressed;
+  const dpadUp = pad.buttons[12] && pad.buttons[12].pressed;
+  const dpadDown = pad.buttons[13] && pad.buttons[13].pressed;
+  if (dpadLeft || pad.axes[0] < -GP_DEADZONE) return 'left';
+  if (dpadRight || pad.axes[0] > GP_DEADZONE) return 'right';
+  if (dpadUp || pad.axes[1] < -GP_DEADZONE) return 'up';
+  if (dpadDown || pad.axes[1] > GP_DEADZONE) return 'down';
+  return null;
+}
+
+function handleGamepadButton(pad, index, action) {
+  const btn = pad.buttons[index];
+  const pressed = !!(btn && btn.pressed);
+  const key = 'b' + index;
+  if (pressed && !gpState.buttonsDown.has(key)) {
+    gpState.buttonsDown.add(key);
+    dispatch(action);
+  } else if (!pressed) {
+    gpState.buttonsDown.delete(key);
+  }
+}
+
+function pollGamepad() {
+  const pads = navigator.getGamepads ? navigator.getGamepads() : [];
+  const pad = pads[0];
+  if (pad) {
+    const now = performance.now();
+    const dir = gpDirection(pad);
+    if (dir) {
+      const isNewDir = dir !== gpState.lastDir;
+      const threshold = isNewDir ? 0 : (gpState.firstRepeatDone ? GP_REPEAT_RATE : GP_REPEAT_DELAY);
+      if (isNewDir || now - gpState.lastMoveTime >= threshold) {
+        dispatch(dir);
+        gpState.lastMoveTime = now;
+        gpState.firstRepeatDone = !isNewDir;
+      }
+      gpState.lastDir = dir;
+    } else {
+      gpState.lastDir = null;
+      gpState.firstRepeatDone = false;
+    }
+    handleGamepadButton(pad, 0, 'a');
+    handleGamepadButton(pad, 1, 'b');
+    handleGamepadButton(pad, 4, 'lb');
+    handleGamepadButton(pad, 5, 'rb');
+  }
+  requestAnimationFrame(pollGamepad);
+}
+
+renderAll();
+renderClock();
+loadState();
+setInterval(loadState, 5000);
+setInterval(renderClock, 15000);
+requestAnimationFrame(pollGamepad);
+</script>
+</body>
+</html>

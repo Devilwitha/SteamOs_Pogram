@@ -50,6 +50,8 @@ import led_settings  # noqa: E402
 import pico_link  # noqa: E402
 import video_player  # noqa: E402
 
+VERSION = "1.0.0"
+
 DB_PATH = STEAMOS_DIR / "games.db"
 AUDIO_DIR = STEAMOS_DIR / "audio"
 VIDEO_DIR = STEAMOS_DIR / "video"
@@ -77,6 +79,8 @@ AUDIO_MODE_LABELS = {
 
 with open(GUI_DIR / "index.html", encoding="utf-8") as _f:
     PAGE_TEMPLATE = _f.read()
+with open(GUI_DIR / "dashboard.html", encoding="utf-8") as _f:
+    DASHBOARD_TEMPLATE = _f.read()
 
 
 def _escape(text):
@@ -573,23 +577,30 @@ def _download_status():
     return {"active": True, "progress": progress, "appid": appid, "name": name}
 
 
-def _gradient_preview_css(start, end, steps=10):
+def _hsv_lerp(color1, color2, t):
+    """Interpoliert zwischen zwei Hex-Farben im HSV-Farbton - dieselbe
+    Rechnung wie pico_client._hsv_lerp(), hier dupliziert statt importiert
+    (gui_server.py und pico_client.py laufen als getrennte Prozesse/Dienste,
+    siehe Modul-Docstrings), damit die Vorschau exakt zeigt, was
+    tatsaechlich auf den LEDs zu sehen sein wird."""
+    h1, s1, v1 = colorsys.rgb_to_hsv(int(color1[1:3], 16) / 255, int(color1[3:5], 16) / 255, int(color1[5:7], 16) / 255)
+    h2, s2, v2 = colorsys.rgb_to_hsv(int(color2[1:3], 16) / 255, int(color2[3:5], 16) / 255, int(color2[5:7], 16) / 255)
+    h = h1 + (h2 - h1) * t
+    s = s1 + (s2 - s1) * t
+    v = v1 + (v2 - v1) * t
+    r, g, b = colorsys.hsv_to_rgb(h, s, v)
+    return f"#{round(r * 255):02x}{round(g * 255):02x}{round(b * 255):02x}"
+
+
+def _gradient_preview_css(start, mid, end, steps=10):
     """CSS linear-gradient() fuer die Vorschau des Download-Farbverlaufs -
-    interpoliert bewusst in denselben HSV-Einzelschritten wie
-    pico_client._download_gradient_color(), damit die Vorschau exakt zeigt,
-    was tatsaechlich auf den LEDs zu sehen sein wird (eine direkte
-    RGB-Interpolation wuerde bei Rot->Gruen faelschlich blasses Oliv statt
-    Gelb bei 50% zeigen)."""
-    h1, s1, v1 = colorsys.rgb_to_hsv(int(start[1:3], 16) / 255, int(start[3:5], 16) / 255, int(start[5:7], 16) / 255)
-    h2, s2, v2 = colorsys.rgb_to_hsv(int(end[1:3], 16) / 255, int(end[3:5], 16) / 255, int(end[5:7], 16) / 255)
+    stueckweise HSV-Interpolation (0-50% Start->Mitte, 50-100% Mitte->Ende),
+    identisch zu pico_client._download_gradient_color()."""
     stops = []
     for i in range(steps + 1):
         t = i / steps
-        h = h1 + (h2 - h1) * t
-        s = s1 + (s2 - s1) * t
-        v = v1 + (v2 - v1) * t
-        r, g, b = colorsys.hsv_to_rgb(h, s, v)
-        stops.append(f"#{round(r * 255):02x}{round(g * 255):02x}{round(b * 255):02x} {round(t * 100)}%")
+        color = _hsv_lerp(start, mid, t / 0.5) if t <= 0.5 else _hsv_lerp(mid, end, (t - 0.5) / 0.5)
+        stops.append(f"{color} {round(t * 100)}%")
     return f"linear-gradient(90deg, {', '.join(stops)})"
 
 
@@ -611,6 +622,7 @@ def _render_led_settings_panel():
     blink_on_sleep = bool(settings.get("blink_on_sleep", True))
     download_pulse = bool(settings.get("download_pulse", True))
     gradient_start = settings.get("download_gradient_start") or "#ff0000"
+    gradient_mid = settings.get("download_gradient_mid") or "#ffff00"
     gradient_end = settings.get("download_gradient_end") or "#00ff00"
     gradient_enabled = bool(settings.get("download_gradient_enabled", True))
 
@@ -623,7 +635,7 @@ def _render_led_settings_panel():
             "</form>"
         )
 
-    gradient_css = _gradient_preview_css(gradient_start, gradient_end)
+    gradient_css = _gradient_preview_css(gradient_start, gradient_mid, gradient_end)
     download = _download_status()
     if download["active"] and download["progress"] is not None:
         marker_pct = max(0.0, min(1.0, download["progress"])) * 100
@@ -672,9 +684,12 @@ def _render_led_settings_panel():
         + _switch("/set_download_gradient_enabled", "enabled", gradient_enabled, "Steuert nur den Leerlauf-Fall: An = Rot-Gelb-Gruen-Verlauf je Downloadfortschritt, Aus = stattdessen in der normalen Leerlauf-Farbe pulsieren")
         + "</div>"
         "<div class='led-row'>"
-        "<div class='led-row-label'>Verlauffarben<small>Bei 0% / bei 100% Downloadfortschritt</small></div>"
+        "<div class='led-row-label'>Verlauffarben<small>Bei 0% / 50% / 100% Downloadfortschritt</small></div>"
         "<form method='POST' action='/set_download_gradient_start' class='color-field'>"
         f"<input type='color' name='color' value='{gradient_start}' onchange='this.form.submit()'>"
+        "</form>"
+        "<form method='POST' action='/set_download_gradient_mid' class='color-field'>"
+        f"<input type='color' name='color' value='{gradient_mid}' onchange='this.form.submit()'>"
         "</form>"
         "<form method='POST' action='/set_download_gradient_end' class='color-field'>"
         f"<input type='color' name='color' value='{gradient_end}' onchange='this.form.submit()'>"
@@ -737,6 +752,7 @@ def _state_payload():
     video_path = audio_config.get_video_path()
     return {
         "ok": True,
+        "app_version": VERSION,
         "games": games_json,
         "tags": tags if tags is not None else [],
         "pico_reachable": tags is not None,
@@ -750,6 +766,7 @@ def _state_payload():
         "blink_on_sleep": led_settings.is_blink_on_sleep_enabled(),
         "download_pulse": led_settings.is_download_pulse_enabled(),
         "download_gradient_start": led_settings.get_download_gradient_start(),
+        "download_gradient_mid": led_settings.get_download_gradient_mid(),
         "download_gradient_end": led_settings.get_download_gradient_end(),
         "download_gradient_enabled": led_settings.is_download_gradient_enabled(),
         **{f"download_{k}": v for k, v in _download_status().items()},
@@ -787,6 +804,7 @@ API_ROUTES = {
     "/api/set_blink_on_sleep": "_api_set_blink_on_sleep",
     "/api/set_download_pulse": "_api_set_download_pulse",
     "/api/set_download_gradient_start": "_api_set_download_gradient_start",
+    "/api/set_download_gradient_mid": "_api_set_download_gradient_mid",
     "/api/set_download_gradient_end": "_api_set_download_gradient_end",
     "/api/set_download_gradient_enabled": "_api_set_download_gradient_enabled",
     "/api/reset_all_colors": "_api_reset_all_colors",
@@ -840,11 +858,22 @@ class Handler(http.server.BaseHTTPRequestHandler):
         if self.path == "/api/state":
             self._respond_json(200, _state_payload())
             return
-        if self.path != "/":
-            self.send_response(404)
-            self.end_headers()
+        if self.path == "/":
+            # Neue Startseite: das Controller-Einstellungsmenue (LEDs,
+            # Sound, Spiele-/Tag-Zuordnung) - Spielstart selbst uebernimmt
+            # Steam Big Picture, das gehoert hier nicht mehr her. Baut sich
+            # komplett per fetch('/api/state') selbst auf, deshalb ohne
+            # Platzhalter-Ersetzung wie bei render_page() unveraendert
+            # ausgeliefert.
+            self._respond(DASHBOARD_TEMPLATE)
             return
-        self._respond(render_page())
+        if self.path == "/admin":
+            # Bisherige Verwaltungs-GUI (Tags, Sounds, LED-Einstellungen,
+            # Datei-Uploads) - frueher unter '/', jetzt hinter dem Menue.
+            self._respond(render_page())
+            return
+        self.send_response(404)
+        self.end_headers()
 
     def _read_api_payload(self):
         """Wie der Body-Parser unten fuer die HTML-Formulare, gibt aber
@@ -906,6 +935,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
             "/set_blink_on_sleep": self._handle_set_blink_on_sleep,
             "/set_download_pulse": self._handle_set_download_pulse,
             "/set_download_gradient_start": self._handle_set_download_gradient_start,
+            "/set_download_gradient_mid": self._handle_set_download_gradient_mid,
             "/set_download_gradient_end": self._handle_set_download_gradient_end,
             "/set_download_gradient_enabled": self._handle_set_download_gradient_enabled,
             "/reset_all_colors": self._handle_reset_all_colors,
@@ -1126,6 +1156,11 @@ class Handler(http.server.BaseHTTPRequestHandler):
         color = form.get("color", ["#ff0000"])[0]
         led_settings.set_download_gradient_start(color)
         return "<div class='message success'>Download-Farbe bei 0% gespeichert.</div>"
+
+    def _handle_set_download_gradient_mid(self, form):
+        color = form.get("color", ["#ffff00"])[0]
+        led_settings.set_download_gradient_mid(color)
+        return "<div class='message success'>Download-Farbe bei 50% gespeichert.</div>"
 
     def _handle_set_download_gradient_end(self, form):
         color = form.get("color", ["#00ff00"])[0]
@@ -1361,6 +1396,11 @@ class Handler(http.server.BaseHTTPRequestHandler):
         color = data.get("color", "#ff0000")
         led_settings.set_download_gradient_start(color)
         return {"ok": True, "message": "Download-Farbe bei 0% gespeichert."}
+
+    def _api_set_download_gradient_mid(self, data):
+        color = data.get("color", "#ffff00")
+        led_settings.set_download_gradient_mid(color)
+        return {"ok": True, "message": "Download-Farbe bei 50% gespeichert."}
 
     def _api_set_download_gradient_end(self, data):
         color = data.get("color", "#00ff00")
