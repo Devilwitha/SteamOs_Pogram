@@ -235,6 +235,29 @@ def _cdp_ws_extract_frame(buf):
     return payload.decode(errors="replace"), buf[idx + length:]
 
 
+def _steamapps_dirs():
+    """Alle steamapps/-Ordner ueber saemtliche Steam-Bibliotheken hinweg
+    (siehe game_scanner.find_library_paths()) - Basis fuer
+    _has_downloading_dir() unten, von beiden Erkennungspfaden
+    (CDP/Steam-UI und dateibasierter Fallback) gemeinsam genutzt."""
+    steam_root = game_scanner.find_steam_root()
+    if steam_root is None:
+        return []
+    return [
+        lp / "steamapps"
+        for lp in game_scanner.find_library_paths(steam_root)
+        if (lp / "steamapps").is_dir()
+    ]
+
+
+def _has_downloading_dir(steamapps_dirs, appid):
+    """True, solange Steam fuer appid noch tatsaechlich einen
+    steamapps/downloading/<appid>/-Ordner offen haelt - existiert laut
+    Steam nur genau so lange, wie fuer diesen Titel noch etwas zu tun ist
+    (Download/Staging/Commit), siehe Moduldocstring."""
+    return any((d / "downloading" / str(appid)).is_dir() for d in steamapps_dirs)
+
+
 def _get_download_progress_from_steam_ui():
     """Fragt SteamClient.Downloads.RegisterForDownloadOverview() live ueber
     steamwebhelpers CDP-Port ab (siehe Moduldocstring) - liefert (appid,
@@ -243,7 +266,16 @@ def _get_download_progress_from_steam_ui():
     nicht erreichbar ist, kein Download laeuft, oder irgendein Schritt
     fehlschlaegt (robust gegenueber allen Netzwerk-/Protokollfehlern, da
     dies nur ein optionaler, bevorzugter Pfad vor dem dateibasierten
-    Fallback ist)."""
+    Fallback ist).
+
+    Zusaetzlich gegen Steams eigenen steamapps/downloading/<appid>/-Ordner
+    abgesichert (siehe _has_downloading_dir()): Steams "Download-Overview"
+    im CDP haelt die zuletzt bekannten Werte teils noch eine Weile fest,
+    NACHDEM ein Download bereits fertig ist (kein neues Event, also kein
+    Grund fuer Steam, den alten Stand zu verwerfen) - ohne diesen Check
+    wuerde das Download-Pulsieren (siehe pico_client.py) dauerhaft auf der
+    100%-Verlauffarbe haengen bleiben, statt zur Leerlauf-Farbe
+    zurueckzukehren, sobald tatsaechlich nichts mehr laeuft."""
     ws_url = _cdp_find_shared_js_context()
     if ws_url is None:
         return None
@@ -277,8 +309,12 @@ def _get_download_progress_from_steam_ui():
     percent = result.get("overall_percent_complete")
     if not appid or percent is None:
         return None
+    appid = int(appid)
 
-    return int(appid), max(0.0, min(1.0, percent / 100.0))
+    if not _has_downloading_dir(_steamapps_dirs(), appid):
+        return None
+
+    return appid, max(0.0, min(1.0, percent / 100.0))
 
 
 def get_download_progress():
@@ -319,18 +355,9 @@ def _get_download_progress_from_manifests():
     das Manifest/die Installation auf dem internen Laufwerk liegt - ohne
     diesen bibliotheksuebergreifenden Check waere Halo faelschlich nie als
     Kandidat erkannt worden)."""
-    steam_root = game_scanner.find_steam_root()
-    if steam_root is None:
+    steamapps_dirs = _steamapps_dirs()
+    if not steamapps_dirs:
         return None
-
-    steamapps_dirs = [
-        lp / "steamapps"
-        for lp in game_scanner.find_library_paths(steam_root)
-        if (lp / "steamapps").is_dir()
-    ]
-
-    def _has_downloading_dir(appid):
-        return any((d / "downloading" / str(appid)).is_dir() for d in steamapps_dirs)
 
     candidates = []
     for steamapps_dir in steamapps_dirs:
@@ -354,7 +381,7 @@ def _get_download_progress_from_manifests():
 
             if to_download <= 0:
                 continue
-            if not _has_downloading_dir(appid):
+            if not _has_downloading_dir(steamapps_dirs, appid):
                 continue
 
             # downloaded kann >= to_download sein, wenn der Netzwerk-Download

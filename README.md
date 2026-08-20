@@ -8,11 +8,13 @@ LED-Streifen, der das erkannte Spiel/den Tag farblich anzeigt.
 - **[steamOs/](steamOs)** - laeuft als Hintergrunddienst (systemd --user) auf
   SteamOS. Sendet alle 3 Sekunden eine Anfrage an den Pico, liest die
   installierten Steam-Spiele in eine SQLite-Datenbank ein, bietet in
-  [`steamOs/gui/`](steamOs/gui) eine Weboberflaeche zur Spielauswahl,
-  zur Verwaltung der vom Pico bekannten RFID-Tags sowie zur Zuweisung
-  einer Farbe pro Spiel/Tag, startet automatisch das Spiel, dessen Tag am
-  Pico erkannt wird, und reicht die passende Farbe an den optionalen
-  Led_Pico weiter.
+  [`steamOs/gui/`](steamOs/gui) ein Controller-Einstellungsmenue (LEDs,
+  Sound, Spiel-/Tag-Zuordnung - Spielstart selbst uebernimmt Steam Big
+  Picture, siehe
+  [steamOs/README.md](steamOs/README.md#controller-einstellungsmenue--und-verwaltungs-gui-admin))
+  sowie unter `/admin` die bisherige Verwaltungs-GUI mit Datei-Uploads,
+  startet automatisch das Spiel, dessen Tag am Pico erkannt wird, und
+  reicht die passende Farbe an den optionalen Led_Pico weiter.
 - **[Pico/](Pico)** - MicroPython-Programm fuer einen Raspberry Pi Pico W.
   Verbindet sich mit dem gespeicherten WLAN (bis zu 3 Versuche); klappt das
   nicht, oeffnet der Pico einen eigenen Access Point mit einer Webseite zur
@@ -30,6 +32,11 @@ LED-Streifen, der das erkannte Spiel/den Tag farblich anzeigt.
 - **[windows/](windows)** - duenne Windows-Einstiegspunkte fuer denselben
   `steamOs/`-Code, nur zum lokalen Testen/Entwickeln auf einem
   Windows-PC ohne Steam Deck oder Pico-Hardware (siehe dortige README).
+- **[android/](android)** - native Android-App (Kotlin/Jetpack Compose), die
+  [`steamOs/gui/`](steamOs/gui) spiegelt: Controller-Menue (LEDs, Sound,
+  Spiel-/Tag-Zuordnung) und Verwaltungs-GUI (Tag-Tabelle, Sound-/Boot-Sound-/
+  Video-Uploads) als zwei Bereiche, ueber dieselben `/api/...`-JSON-Routen wie
+  [`Pico/control.html`](Pico/control.html) (siehe dortige README).
 
 ## Einrichtungsreihenfolge
 
@@ -40,12 +47,18 @@ LED-Streifen, der das erkannte Spiel/den Tag farblich anzeigt.
    `./install.sh` im Ordner `steamOs/` ausfuehren (Erreichbarkeits-Monitor +
    Spielstart-Trigger + periodischer Spiele-Scan).
 3. **Spiel mit einem Tag verknuepfen:** `python3 steamOs/gui/gui_server.py`
-   starten, entweder ein Spiel auswaehlen und danach einen Tag an den RC522
-   halten, oder einen bereits erkannten Tag direkt aus der Tag-Liste einem
-   Spiel zuweisen. In derselben GUI laesst sich optional auch eine Farbe
-   pro Spiel/Tag zuweisen (fuer Schritt 6).
+   starten, `http://localhost:8090/admin` oeffnen (die Verwaltungs-GUI -
+   das neue Controller-Menue unter `/` ist fuer die Tag-Verknuepfung nicht
+   noetig, siehe
+   [steamOs/README.md](steamOs/README.md#controller-einstellungsmenue--und-verwaltungs-gui-admin)),
+   entweder ein Spiel auswaehlen und danach einen Tag an den RC522 halten,
+   oder einen bereits erkannten Tag direkt aus der Tag-Liste einem Spiel
+   zuweisen. In derselben GUI laesst sich optional auch eine Farbe pro
+   Spiel/Tag zuweisen (fuer Schritt 6).
 4. **Spiel starten:** Tag an den RC522 halten - SteamOS startet automatisch
-   das zugehoerige Spiel.
+   das zugehoerige Spiel. Steam Big Picture bleibt fuer den manuellen
+   Spielstart zustaendig; das Controller-Menue unter `/` deckt nur die
+   Hardware-Einstellungen ab (LEDs, Sound, Tag-Zuordnung).
 5. Beide Geraete muessen sich im selben lokalen Netzwerk befinden. Die
    Pico-IP wird von SteamOS automatisch per UDP-Broadcast gefunden - eine
    manuelle Eintragung in `steamOs/config.json` ist nur noetig, falls
@@ -86,7 +99,7 @@ LED-Streifen, der das erkannte Spiel/den Tag farblich anzeigt.
 | Pico -> SteamOS | TCP 5005 | `TAGS:<json>` | Liste `[{"uid":..., "game_uid":...}, ...]` |
 | SteamOS -> Pico | TCP 5005 | `LINK:<uid>:<spiel-uid>` | Verknuepft einen bekannten Tag direkt mit einem Spiel (leer = trennen) |
 | Pico -> SteamOS | TCP 5005 | `OK:LINK:<uid>` / `ERROR:unknown_tag` | Bestaetigung bzw. Fehler |
-| SteamOS -> Pico | TCP 5005 | `TAGCOLOR:<uid>:<farbe>` | Setzt (leer = loescht) die eigene Farbe eines bekannten Tags |
+| SteamOS -> Pico | TCP 5005 | `TAGCOLOR:<uid>:<farbe>` | Setzt (leer = loescht) die eigene Farbe eines bekannten Tags - vom Pico weiterhin unterstuetzt, wird von der aktuellen GUI aber nicht mehr gesendet (genau eine Farbe pro Spiel statt separater Tag-Farbe, siehe [steamOs/README.md](steamOs/README.md#farbe-pro-spiel-fuer-den-led_pico)) |
 | Pico -> SteamOS | TCP 5005 | `OK:TAGCOLOR:<uid>` / `ERROR:unknown_tag` | Bestaetigung bzw. Fehler |
 | SteamOS -> Pico | TCP 5005 | `CURRENT?` | Fragt den gerade aufliegenden Tag ab (nicht einmalig wie `TAG?`) |
 | Pico -> SteamOS | TCP 5005 | `CURRENT:<json>` / `CURRENT:NONE` | `{"uid":..., "game_uid":..., "game_name":..., "color":..., "status":...}`, oder nichts aufliegend - Grundlage fuer die Led_Pico-Farbe. `status` ist `erkannt`/`gesendet`/`gestartet` (siehe [Pico/README.md](Pico/README.md)) |

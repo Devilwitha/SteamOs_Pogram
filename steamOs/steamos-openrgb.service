@@ -1,12 +1,39 @@
+# Bewusst OHNE "After=graphical-session.target": das fuehrte dazu, dass der
+# Dienst im Game Mode (gamescope-Sitzung) gar nicht erst gestartet wurde,
+# solange dieses Target nicht erreicht ist. Gleiche After/Wants-
+# Abhaengigkeit wie steamos-pico-monitor.service/steamos-lilygo-monitor.
+# service/steamos-gui.service, damit alle vier Dienste gemeinsam starten.
+#
+# QT_QPA_PLATFORM=offscreen ist der eigentliche Fix (per Boot-Diagnose im
+# Game Mode gefunden, siehe Chatverlauf): im Game Mode (gamescope) sind
+# weder DISPLAY noch WAYLAND_DISPLAY in der systemd --user-Umgebung
+# gesetzt (XDG_SESSION_TYPE dort "x11", aber ohne echten X-Server), Qt
+# (OpenRGB) stuerzt beim Versuch, sich mit einem Anzeige-Server zu
+# verbinden, deshalb dort IMMER und sofort mit SIGABRT ab (exit code 134) -
+# kein Timing-Problem, kein Race, 100% reproduzierbar. Da OpenRGB hier nur
+# als headless SDK-Server laeuft (--server --startminimized, keine
+# sichtbare Oberflaeche noetig), macht offscreen-Rendering die Abhaengigkeit
+# von einem echten Anzeige-Server komplett ueberfluessig - funktioniert
+# dadurch identisch in Game Mode und Desktop-Modus.
+#
+# StartLimitIntervalSec=0 bleibt als zusaetzliche Absicherung: ohne das
+# markiert systemd einen Dienst nach StartLimitBurst (Standard 5)
+# Startversuchen innerhalb von StartLimitIntervalSec (Standard 10s)
+# dauerhaft als "failed" und gibt komplett auf (siehe Chatverlauf: mit
+# einem kurzen RestartSec ist genau das passiert, der Dienst blieb dann
+# auch im Desktop-Modus tot, bis er manuell zurueckgesetzt wurde).
 [Unit]
 Description=OpenRGB SDK-Server (fuer lokale USB-RGB-Geraete, z. B. einen Corsair-LED-Streifen)
-After=graphical-session.target
+After=network-online.target
+Wants=network-online.target
+StartLimitIntervalSec=0
 
 [Service]
 Type=simple
+Environment=QT_QPA_PLATFORM=offscreen
 ExecStart=/usr/bin/flatpak run org.openrgb.OpenRGB --server --startminimized
 Restart=always
-RestartSec=5
+RestartSec=2
 
 [Install]
 WantedBy=default.target

@@ -148,14 +148,6 @@ def link_tag(ip, tcp_port, uid_hex, game_uid, name=None, timeout=3.0):
     return response == f"OK:LINK:{uid_hex}"
 
 
-def set_tag_color(ip, tcp_port, uid_hex, color, timeout=3.0):
-    """Setzt (color leer = loescht) die eigene LED-Farbe eines dem Pico
-    bereits bekannten Tags - fuer den Led_Pico (siehe ../Led_Pico), hat
-    Vorrang vor der Farbe des verknuepften Spiels."""
-    response = _send_command(ip, tcp_port, f"TAGCOLOR:{uid_hex}:{color or ''}", timeout)
-    return response == f"OK:TAGCOLOR:{uid_hex}"
-
-
 def fetch_current(ip, tcp_port, timeout=2.0):
     """Fragt den aktuell aufliegenden Tag ab (UID, verknuepfte Spiel-UID
     und eigene Farbe), unabhaengig vom einmaligen TAG?-Meldezustand.

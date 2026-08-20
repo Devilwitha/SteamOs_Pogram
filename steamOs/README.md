@@ -160,10 +160,13 @@ Startet einen lokalen Webserver (`http://localhost:8090`, siehe `gui_port`
 in `config.json`) und versucht,
 ihn automatisch im Standardbrowser zu oeffnen (Desktop-Modus) - klappt das
 nicht (z. B. kein Standardbrowser registriert), einfach die Adresse von
-Hand im Browser aufrufen. Das HTML liegt in [`gui/index.html`](gui/index.html)
-(nicht im Python-Code eingebettet); `gui_server.py` fuellt darin nur die
-Platzhalter `__MESSAGE__`/`__ROWS__`/`__TAG_ROWS__`. Angezeigt werden alle
-Spiele aus der Datenbank mit Name, Installationsstatus und UID. Klick auf
+Hand im Browser aufrufen. Ausgeliefert wird dabei standardmaessig das
+[Controller-Einstellungsmenue](#controller-einstellungsmenue--und-verwaltungs-gui-admin)
+(`/`) - die hier beschriebene Tabellen-Ansicht liegt unter `/admin`. Das
+HTML liegt in [`gui/index.html`](gui/index.html) (nicht im Python-Code
+eingebettet); `gui_server.py` fuellt darin nur die Platzhalter
+`__MESSAGE__`/`__ROWS__`/`__TAG_ROWS__`. Angezeigt werden alle Spiele aus
+der Datenbank mit Name, Installationsstatus und UID. Klick auf
 **"An Pico senden"**:
 
 1. sucht den Pico im Netzwerk (oder nutzt die konfigurierte `pico_ip`),
@@ -182,16 +185,124 @@ Nach dem `SELECT`-Schritt muss noch ein Tag an den RC522 gehalten werden -
 erst dann verknuepft der Pico ihn tatsaechlich mit der UID (siehe
 [Pico/README.md](../Pico/README.md)).
 
-### Farbe pro Spiel/Tag (fuer den Led_Pico)
+### Controller-Einstellungsmenue (`/`) und Verwaltungs-GUI (`/admin`)
 
-Sowohl in der Spiele- als auch in der Tag-Tabelle gibt es eine Spalte
-"Farbe" mit einem Farbfeld je Zeile - Aenderungen werden sofort
-gespeichert (Spiel-Farbe direkt in `games.db`, Tag-Farbe per
-`TAGCOLOR:<uid>:<farbe>` auf dem Pico). Eine am Tag gesetzte Farbe hat
-Vorrang vor der Farbe des verknuepften Spiels. Beide werden von
-`pico_client.py` genutzt, um einen optionalen zweiten Pico (siehe
-[../Led_Pico](../Led_Pico)) mit der passenden Farbe fuer einen
-LED-Streifen zu versorgen - siehe
+Spielstart selbst ist auf SteamOS bereits Aufgabe von **Steam Big Picture**
+- ein zusaetzliches Kachel-Menue dafuer waere redundant. Stattdessen ist
+[`gui/dashboard.html`](gui/dashboard.html) (neue Startseite von
+`gui_server.py`) ein Einstellungsmenue fuer genau das, was Big Picture
+nicht kann: die Hardware-Steuerung dieses Projekts (LEDs, Sound-Modus,
+Sound/Farbe pro Spiel, RFID-Tag-Verknuepfung). Aufgebaut wie ein
+Konsolen-Systemmenue (Kategorien links, Einstellungen rechts) und
+vollstaendig per Tastatur/Maus **oder** per an den PC angeschlossenem
+Controller ueber die
+[Gamepad-Web-API](https://developer.mozilla.org/en-US/docs/Web/API/Gamepad_API)
+bedienbar (kein zusaetzlicher Treiber noetig, sofern der Controller vom
+Browser als Standard-Gamepad erkannt wird - funktioniert zuverlaessig bei
+direktem Aufruf im normalen Desktop-Browser; **fuer den Start aus Big
+Picture heraus siehe stattdessen
+[gui/native_console.py](#als-nicht-steam-spiel-in-big-picture-hinzufuegen)
+weiter unten** - dort liefert die Gamepad-Web-API unter Wayland keine
+zuverlaessigen Events, siehe dort fuer Details):
+
+| Aktion | Tastatur | Controller |
+|---|---|---|
+| Zeile/Kategorie wechseln | Pfeiltasten | D-Pad / linker Stick |
+| Wert aendern (Toggle/Farbe/Modus) | Pfeil links/rechts | D-Pad/Stick links/rechts |
+| Auswaehlen/Umschalten/Untermenue oeffnen | Enter/Leertaste | A |
+| Zurueck | Esc/Backspace | B |
+| Kategorie wechseln (von ueberall) | Q / E | LB / RB |
+
+**Kategorien:** *LEDs* (Sync an/aus, Leerlauf-Farbe, Blinken bei
+Sleep/Shutdown, Download-Pulsieren, Farbverlauf mit frei waehlbaren
+Stuetzfarben bei 0/50/100% Downloadfortschritt), *Sound* (Modus-Umschalter
+`songs`/`boot_sound`/`video`, Test-Wiedergabe), *Spiele* (pro Spiel: Farbe,
+Sound aktiv/inaktiv + Test, "fuer naechsten Tag vormerken" - oeffnet sich
+als Untermenue aus der Spieleliste), *Tags* (verknuepfen/trennen, Farbe,
+loeschen - ebenfalls als Untermenue je Tag), *Werkzeuge* (alle
+Spielfarben zuruecksetzen, mit Inline-Sicherheitsabfrage) und *Info*
+(Softwareversion, Hersteller "BolliSoft", Code von Nico Bollhalder).
+Farben werden
+nicht per echtem Farbwaehler gesetzt (per Gamepad nicht praktikabel
+bedienbar), sondern per fester Palette durchgeschaltet - jede Aenderung
+speichert sofort ueber dieselben JSON-Endpunkte, die auch `/admin`
+verwendet (`/api/set_game_color`, `/api/link_tag`, ...).
+
+Datei-Uploads (neuer Sound/Boot-Video) bleiben bewusst der Tabellen-GUI
+unter `/admin` vorbehalten - ein Datei-Dialog ist per Controller ohnehin
+nicht sinnvoll bedienbar. Erreichbar ueber das Zahnrad-Icon oben rechts im
+Menue bzw. direkt unter `http://localhost:8090/admin`.
+
+### Als Nicht-Steam-Spiel in Big Picture hinzufuegen
+
+Das Controller-Einstellungsmenue laeuft in Big Picture als **natives
+Programm** ([`gui/native_console.py`](gui/native_console.py), gestartet
+ueber den duennen Einstiegspunkt
+[`gui/launch_dashboard.py`](gui/launch_dashboard.py)) statt in einem
+Browser-Kiosk-Fenster. Grund: Chromes/Firefoxs Gamepad-Web-API liefert
+unter Wayland (SteamOS/Bazzite) keine zuverlaessigen Controller-Events,
+sobald die Seite von Steam aus gestartet wird - weder mit noch ohne Steam
+Input (sowohl der Eintrags-Schalter als auch die globalen
+"Xbox/PlayStation/Generic-Konfigurationsunterstuetzung"-Haken wurden
+getestet, ohne Wirkung; nur Steams eigener "Steam-Taste halten"-
+Systemcursor, unabhaengig vom Fenster, funktionierte). `native_console.py`
+liest den Controller stattdessen direkt ueber SDL2 (`pygame-ce`, siehe
+Voraussetzung unten) - dieselbe Eingabe-Schicht, die auch echte native
+Linux-Spiele fuer Controller-Support nutzen, unabhaengig von
+Fenster-Fokus-Weiterleitung durch Compositor/Steam/Browser. Das Backend
+(`gui_server.py`, alle `/api/*`-Routen) ist davon unberuehrt - dasselbe
+`native_console.py` spricht exakt dieselbe JSON-API wie zuvor
+`dashboard.html`.
+
+**Voraussetzung:** `pip install --user pygame-ce` (Version >=2.0 fuer das
+SDL_GameController-API, `pygame._sdl2.controller` - normalisiert auch
+exotischere Controller-Layouts auf ein Standard-Xbox-Layout). Falls
+`pip install --user pygame` mit einem Fehler wie "Unable to run
+sdl-config" fehlschlaegt (kein vorgebautes Wheel fuer die installierte
+Python-Version, Build aus dem Quellcode braucht SDL2-Entwicklungspakete,
+die auf SteamOS/Bazzite ohne `rpm-ostree install` nicht verfuegbar sind):
+`pygame-ce` (https://pyga.me/) ist ein API-kompatibler Fork mit
+aktuelleren vorgebauten Wheels und bringt dieselbe `import pygame`-API
+mit - kein Code-Unterschied, nur ein anderes zu installierendes Paket.
+
+**Einrichtung (einmalig, im Desktop-Modus):**
+
+1. `pip install --user pygame-ce` (siehe oben).
+2. Datei ausfuehrbar machen (falls noch nicht geschehen):
+   `chmod +x steamOs/gui/launch_dashboard.py`.
+3. Im Steam-Client: **Spiele -> Ein Nicht-Steam-Spiel zu meiner Bibliothek
+   hinzufuegen...**, "Durchsuchen" und `steamOs/gui/launch_dashboard.py`
+   auswaehlen.
+4. Den neuen Eintrag umbenennen (z. B. "SteamOS Konsole").
+5. Optional eigenes Vorschaubild: Eintrag in der Bibliothek mit der rechten
+   Maustaste -> **Eigenschaften verwalten -> Benutzerdefinierte Grafiken
+   festlegen...** und
+   [`gui/assets/dashboard_grid.png`](gui/assets/dashboard_grid.png)
+   auswaehlen (600x900, im selben HUD-Look wie das Menue selbst - per
+   `python3 gui/assets/make_grid_art.py` neu erzeugbar, braucht Pillow).
+6. In den Game Mode/Big Picture wechseln - der Eintrag erscheint in der
+   Bibliothek wie ein Spiel.
+
+**Bedienung:** D-Pad/linker Stick zum Navigieren, `A` waehlt/schaltet um,
+`B` geht zurueck, `LB`/`RB` wechseln die Kategorie, `B` ca. 1s halten
+beendet das Programm (Big Picture kehrt danach zur Bibliothek zurueck).
+Tastatur (Pfeile/Enter/Escape/Q/E) und Maus (Klick auf eine Zeile bzw. auf
+die `‹`/`›`-Pfeile bei Farb-/Modus-Zeilen) funktionieren zusaetzlich -
+nuetzlich zum Testen ohne Controller, z. B. direkt per
+`python3 steamOs/gui/launch_dashboard.py` im Desktop-Modus.
+
+### Farbe pro Spiel (fuer den Led_Pico)
+
+In der Spiele-Tabelle gibt es eine Spalte "Farbe" mit einem Farbfeld je
+Zeile - Aenderungen werden sofort direkt in `games.db` gespeichert. Genau
+eine Farbe pro Spiel (bewusst keine zusaetzliche, separate Tag-Farbe mehr -
+fruehers TAGCOLOR-Feature war zwei potenziell widerspruechliche Farben pro
+Spiel/Tag-Paar). Die Tag-Tabelle hat deshalb keine eigene Farbspalte mehr;
+im Controller-Einstellungsmenue (siehe unten) zeigt ein Farbklecks je Tag
+aber weiterhin zur Information die Farbe des jeweils verknuepften Spiels.
+`pico_client.py` nutzt die Spielfarbe, um einen optionalen
+zweiten Pico (siehe [../Led_Pico](../Led_Pico)) mit der passenden Farbe
+fuer einen LED-Streifen zu versorgen - siehe
 [Automatischer Spielstart](#automatischer-spielstart-per-rfid-tag) und
 [Konfiguration des Led_Pico](#konfiguration-des-led_pico-led_configjson)
 unten.
@@ -271,12 +382,23 @@ Takt zusaetzlich Folgendes:
    gestartet, solange derselbe Tag liegen bleibt.
 4. Unabhaengig davon wird bei jedem Takt zusaetzlich per `CURRENT?` der
    aktuell aufliegende Tag abgefragt (nicht einmalig wie `TAG?`, siehe
-   oben) und die daraus ermittelte Farbe (Tag-Farbe, sonst Spiel-Farbe,
-   sonst Weiss im Leerlauf - siehe `pico_client.IDLE_LED_COLOR`) an einen
-   optionalen [Led_Pico](../Led_Pico) sowie optionale lokale USB-RGB-LEDs
-   per OpenRGB (siehe [Corsair/OpenRGB-LEDs](#corsair-openrgb-usb-rgb-leds))
-   weitergereicht - jeweils nur wenn sie sich seit dem letzten Takt
-   geaendert hat.
+   oben) und die daraus ermittelte Farbe (Farbe des verknuepften Spiels,
+   sonst Weiss im Leerlauf - konfigurierbar, siehe `led_settings.py`/
+   `resolve_led_color()`) an einen optionalen [Led_Pico](../Led_Pico)
+   sowie optionale lokale USB-RGB-LEDs per OpenRGB (siehe
+   [Corsair/OpenRGB-LEDs](#corsair-openrgb-usb-rgb-leds)) weitergereicht -
+   jeweils nur wenn sie sich seit dem letzten Takt geaendert hat.
+5. **Auch ganz ohne aufliegenden Tag** (oder ganz ohne Pico) ermittelt
+   `pico_client.py` bei jedem Takt zusaetzlich per Prozess-Scan
+   (`_scan_for_process_color()`), ob eines der installierten Spiele gerade
+   laeuft (z. B. direkt ueber Steam Big Picture gestartet, ohne RFID) -
+   dessen Farbe wird dann genauso an die LEDs weitergereicht wie bei einem
+   per Tag erkannten Spiel. Bevorzugt dafuer Steams eigenen `reaper`-
+   Prozess (`SteamLaunch AppId=<id>`, bleibt zuverlaessig fuer die
+   komplette Spielsitzung bestehen) statt eines reinen Abgleichs gegen den
+   Installationspfad, der bei Proton-Spielen nur kurzlebige Bootstrap-
+   Prozesse faende, nicht das eigentliche (unter einem virtuellen
+   Windows-Pfad laufende) Spiel.
 
 ### Automatisches Beenden bei entferntem/gewechseltem Tag
 
@@ -298,10 +420,14 @@ in `pico_client.py`):
   Start erzeugten Prozess wuerde das Spiel selbst also i. d. R. **nicht**
   stoppen. `stop_game()` sucht deshalb zusaetzlich (Linux/`/proc`) nach
   laufenden Prozessen unterhalb von `install_path` des Spiels und schickt
-  diesen `SIGTERM`. Das ist ein Best-Effort-Ansatz (kein offizieller
-  Steam-Mechanismus) - bei Spielen mit ungewoehnlicher Prozessstruktur
-  (z. B. mehrere unabhaengige Prozesse ausserhalb von `install_path`,
-  manche Proton-Spiele) kann das Beenden unvollstaendig bleiben.
+  diesen `SIGTERM` - zusaetzlich, sofern gefunden, auch an Steams eigenen
+  `reaper`-Prozess (`SteamLaunch AppId=<id>`, siehe oben): der beendet
+  beim Empfang von `SIGTERM` zuverlaessig auch das von ihm ueberwachte
+  Spiel mit, selbst wenn der eigentliche Spielprozess (z. B. bei Proton
+  unter einem virtuellen Windows-Pfad) sich nicht ueber `install_path`
+  finden liesse. Das bleibt trotzdem ein Best-Effort-Ansatz (kein
+  offizieller Steam-Mechanismus) - bei Spielen mit ungewoehnlicher
+  Prozessstruktur kann das Beenden unvollstaendig bleiben.
 
 Die worst-case Verzoegerung zwischen tatsaechlichem Entfernen des Tags und
 dem Beenden des Spiels ist die Summe aus `tag_manager.TAG_GRACE_MS` (Pico,
@@ -351,6 +477,12 @@ Farbe wie der Led_Pico (siehe oben), aber lokal am PC. Setzt voraus:
    (`steamos-openrgb.service`, wird von `install.sh` nur eingerichtet,
    wenn OpenRGB tatsaechlich installiert ist - sonst wuerde der Dienst mit
    `Restart=always` endlos gegen eine fehlende Flatpak-App fehlschlagen).
+   Laeuft dabei bewusst mit `QT_QPA_PLATFORM=offscreen` (siehe
+   `steamos-openrgb.service`): im Game Mode sind weder `DISPLAY` noch
+   `WAYLAND_DISPLAY` in der systemd-Sitzung gesetzt, OpenRGB (Qt) stuerzt
+   ohne diese Variable dort sofort und dauerhaft ab, sobald es einen
+   Anzeige-Server sucht - unnoetig, da OpenRGB hier nur als headless
+   SDK-Server laeuft.
 2. Die offizielle Python-Bibliothek installiert:
    `pip install --user openrgb-python` (anders als der Rest von `steamOs/`
    bewusst nicht auf die Standardbibliothek beschraenkt - das binaere
