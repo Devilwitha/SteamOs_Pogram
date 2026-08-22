@@ -291,6 +291,17 @@ die `‹`/`›`-Pfeile bei Farb-/Modus-Zeilen) funktionieren zusaetzlich -
 nuetzlich zum Testen ohne Controller, z. B. direkt per
 `python3 steamOs/gui/launch_dashboard.py` im Desktop-Modus.
 
+### Alternative: als Decky-Plugin im Quick-Access-Menu
+
+Statt eines eigenen Bibliothekseintrags lassen sich dieselben
+Einstellungen auch direkt im Quick-Access-Menu von Big Picture anzeigen
+(der "..."-Button, auch waehrend ein Spiel laeuft erreichbar) - siehe
+[`../decky-plugin/`](../decky-plugin/) fuer das dazugehoerige
+[Decky-Loader](https://decky.xyz/)-Plugin samt Bau-/Installationsanleitung.
+Spricht dieselbe `/api/*`-JSON-API von `gui_server.py` wie
+`native_console.py`/`dashboard.html` - keine der drei Oberflaechen
+schliesst die anderen aus, alle drei koennen parallel genutzt werden.
+
 ### Farbe pro Spiel (fuer den Led_Pico)
 
 In der Spiele-Tabelle gibt es eine Spalte "Farbe" mit einem Farbfeld je
