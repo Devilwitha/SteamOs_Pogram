@@ -80,6 +80,13 @@ set "PLUGIN_DIR=%STAGE_DIR%\%PLUGIN_NAME%"
 
 mkdir "%PLUGIN_DIR%" || goto :fail
 copy /y "plugin.json" "%PLUGIN_DIR%\" >nul
+rem package.json muss mit ins installierte Verzeichnis - Decky Loader
+rem (backend/decky_loader/plugin/plugin.py) liest daraus "type": "module" und
+rem waehlt nur dann den modernen ESMODULE_V1-Ladepfad (dynamisches import());
+rem fehlt package.json oder das Feld, faellt es auf den alten
+rem LEGACY_EVAL_IIFE-Pfad zurueck, der unser ESM-gebautes dist/index.js per
+rem eval() ausfuehrt und an dessen "export"-Anweisung mit SyntaxError scheitert.
+copy /y "package.json" "%PLUGIN_DIR%\" >nul
 copy /y "main.py" "%PLUGIN_DIR%\" >nul
 xcopy /e /i /q "dist" "%PLUGIN_DIR%\dist" >nul
 if exist "README.md" copy /y "README.md" "%PLUGIN_DIR%\" >nul

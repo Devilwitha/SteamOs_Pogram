@@ -30,7 +30,13 @@ trap 'rm -rf "$STAGE_DIR"' EXIT
 
 PLUGIN_DIR="$STAGE_DIR/$PLUGIN_NAME"
 mkdir -p "$PLUGIN_DIR"
-cp plugin.json main.py "$PLUGIN_DIR/"
+# package.json muss mit ins installierte Verzeichnis - Decky Loader
+# (backend/decky_loader/plugin/plugin.py) liest daraus "type": "module" und
+# waehlt nur dann den modernen ESMODULE_V1-Ladepfad (dynamisches import());
+# fehlt package.json oder das Feld, faellt es auf den alten
+# LEGACY_EVAL_IIFE-Pfad zurueck, der unser ESM-gebautes dist/index.js per
+# eval() ausfuehrt und an dessen "export"-Anweisung mit SyntaxError scheitert.
+cp plugin.json package.json main.py "$PLUGIN_DIR/"
 cp -r dist "$PLUGIN_DIR/dist"
 [ -f README.md ] && cp README.md "$PLUGIN_DIR/"
 [ -f LICENSE ] && cp LICENSE "$PLUGIN_DIR/"

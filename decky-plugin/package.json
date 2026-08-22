@@ -2,6 +2,7 @@
   "name": "steamos-konsole",
   "version": "0.1.0",
   "description": "Zeigt die SteamOS-Konsolen-Einstellungen (LEDs, Sound, Tags) direkt im Quick-Access-Menu von Big Picture.",
+  "type": "module",
   "scripts": {
     "build": "shx rm -rf dist && rollup -c",
     "watch": "rollup -c -w"
