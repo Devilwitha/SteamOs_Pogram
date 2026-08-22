@@ -16,7 +16,7 @@ import json
 import urllib.error
 import urllib.request
 
-import decky_plugin
+import decky
 
 GUI_PORT = 8090
 BASE_URL = f"http://127.0.0.1:{GUI_PORT}"
@@ -25,7 +25,7 @@ TIMEOUT_SECONDS = 8
 
 class Plugin:
     async def _main(self):
-        decky_plugin.logger.info(
+        decky.logger.info(
             "SteamOS-Konsole-Plugin gestartet, Backend unter %s", BASE_URL
         )
 
@@ -50,7 +50,7 @@ class Plugin:
             with urllib.request.urlopen(req, timeout=TIMEOUT_SECONDS) as resp:
                 return json.loads(resp.read().decode("utf-8"))
         except (urllib.error.URLError, TimeoutError, ValueError) as e:
-            decky_plugin.logger.error(
+            decky.logger.error(
                 "gui_server.py nicht erreichbar (%s %s): %s", method, path, e
             )
             return {"ok": False, "error": str(e)}

@@ -89,7 +89,16 @@ if not exist "%RELEASE_DIR%" mkdir "%RELEASE_DIR%"
 set "ZIP_PATH=%RELEASE_DIR%\%PLUGIN_NAME%-%VERSION%.zip"
 if exist "%ZIP_PATH%" del /f /q "%ZIP_PATH%"
 
-powershell -NoProfile -Command "Compress-Archive -Path '%STAGE_DIR%\%PLUGIN_NAME%' -DestinationPath '%ZIP_PATH%' -CompressionLevel Optimal"
+rem Bewusst tar.exe statt PowerShells Compress-Archive: Compress-Archive
+rem speichert Ordnertrennzeichen als Backslash im ZIP-Eintragsnamen ab, was
+rem am Zielsystem (Steam Deck, Linux) beim Entpacken keine Unterordner
+rem ergibt, sondern Dateien mit woertlichem Backslash im Namen - das
+rem installierte "Plugin" landet dann nicht dort, wo Decky Loader es
+rem erwartet, und im Quick-Access-Menu passiert scheinbar nichts. tar.exe
+rem (in Windows seit 10/1803 fest eingebaut, volle Pfadangabe hier, weil ein
+rem evtl. vorhandenes Git-fuer-Windows-tar.exe frueher im PATH kein "-a" mit
+rem .zip unterstuetzt) schreibt stattdessen korrekt Forward-Slashes.
+"%SystemRoot%\System32\tar.exe" -a -cf "%ZIP_PATH%" -C "%STAGE_DIR%" "%PLUGIN_NAME%"
 if errorlevel 1 (
     echo Fehler beim Erstellen der ZIP-Datei.
     rmdir /s /q "%STAGE_DIR%"
