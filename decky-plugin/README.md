@@ -74,6 +74,12 @@ das Decky-Loader-Menu (Quick-Access-Menu -> Decky-Icon -> Einstellungen
 per Datei-Auswahl-Dialog dort). Alternativ die ZIP manuell nach
 `~/homebrew/plugins/` entpacken (siehe Ausgabe des Skripts).
 
+Zum Bauen auf einem Windows-PC (z. B. weil Node.js/pnpm nicht auf dem
+Steam Deck installiert werden sollen) gibt es `build_zip.bat` - installiert
+bei Bedarf zusaetzlich Node.js (ueber `winget`) und pnpm (ueber `corepack`,
+kommt mit Node.js) und baut danach dieselbe ZIP. Installiert wird das
+Plugin trotzdem nur auf dem Steam Deck (ZIP rueberkopieren, siehe oben).
+
 **B) Ueber den Decky-Loader-Entwicklermodus (zum Testen mit Live-Reload):**
 Im Decky-Loader-Menu unter "Einstellungen -> Entwickler" den
 Entwicklermodus aktivieren, dort laesst sich ein Plugin direkt aus einem
