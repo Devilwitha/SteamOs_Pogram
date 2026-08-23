@@ -70,6 +70,7 @@ CATEGORIES = [
     ("sound", "Sound"),
     ("games", "Spiele"),
     ("tags", "Tags"),
+    ("usb", "USB"),
     ("tools", "Werkzeuge"),
     ("info", "Info"),
 ]
@@ -355,6 +356,17 @@ def open_game_picker(tag, state):
     open_submenu("Verknüpfen: " + short_uid(tag["uid"]), [make(g) for g in games])
 
 
+def usb_rows(state):
+    # Spiegelbild von usbRows() in dashboard.html - siehe dort. Zeigt, was
+    # gui_server.py._usb_scan_loop() (alle 5s, nur solange kein Spiel
+    # laeuft) an automatisch gemounteten USB-Datentraegern mit einer
+    # APP.txt gefunden hat.
+    devices = state.get("usb_devices") or []
+    if not devices:
+        return [info_row("Kein USB-Datentraeger mit APP.txt erkannt.")]
+    return [stat_row(d["name"], "erkannt · " + d["mount"]) for d in devices]
+
+
 _tools_confirm_armed = False
 
 
@@ -388,6 +400,7 @@ CATEGORY_ROWS = {
     "sound": sound_rows,
     "games": games_rows,
     "tags": tags_rows,
+    "usb": usb_rows,
     "tools": tools_rows,
     "info": info_rows,
 }
@@ -580,6 +593,14 @@ def draw_icon(screen, cat_id, rect, color):
             (cx + s * 0.38, cy + s * 0.05), (cx + s * 0.05, cy + s * 0.38),
         ], 2)
         pygame.draw.circle(screen, color, (int(cx + s * 0.2), int(cy - s * 0.2)), 2)
+    elif cat_id == "usb":
+        body = pygame.Rect(0, 0, s * 0.5, s * 0.32)
+        body.center = (cx, cy - s * 0.18)
+        pygame.draw.rect(screen, color, body, 2, border_radius=int(s * 0.06))
+        pygame.draw.line(screen, color, (cx - s * 0.12, body.top), (cx - s * 0.12, body.top - s * 0.14), 2)
+        pygame.draw.line(screen, color, (cx + s * 0.02, body.top), (cx + s * 0.02, body.top - s * 0.14), 2)
+        pygame.draw.line(screen, color, (cx, cy + s * 0.02), (cx, cy + s * 0.34), 2)
+        pygame.draw.circle(screen, color, (int(cx), int(cy + s * 0.34)), 3)
     elif cat_id == "tools":
         pygame.draw.circle(screen, color, (int(cx - s * 0.2), int(cy - s * 0.2)), s * 0.16, 2)
         pygame.draw.line(screen, color, (cx - s * 0.08, cy - s * 0.08), (cx + s * 0.3, cy + s * 0.3), 2)

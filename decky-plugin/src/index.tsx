@@ -16,6 +16,7 @@ import {
   FaMusic,
   FaGamepad,
   FaTags,
+  FaUsb,
   FaTools,
   FaInfoCircle,
 } from "react-icons/fa";
@@ -72,6 +73,11 @@ interface TagInfo {
   game_uid?: string | null;
 }
 
+interface UsbDeviceInfo {
+  mount: string;
+  name: string;
+}
+
 interface AppStateData {
   led_enabled: boolean;
   idle_led_color: string;
@@ -88,6 +94,7 @@ interface AppStateData {
   video_name?: string;
   games: GameInfo[];
   tags: TagInfo[];
+  usb_devices: UsbDeviceInfo[];
   app_version?: string;
 }
 
@@ -107,6 +114,7 @@ const CATEGORIES = [
   { id: "sound", label: "Sound", icon: <FaMusic /> },
   { id: "games", label: "Spiele", icon: <FaGamepad /> },
   { id: "tags", label: "Tags", icon: <FaTags /> },
+  { id: "usb", label: "USB", icon: <FaUsb /> },
   { id: "tools", label: "Werkzeuge", icon: <FaTools /> },
   { id: "info", label: "Info", icon: <FaInfoCircle /> },
 ] as const;
@@ -647,6 +655,34 @@ function TagsPage({
   );
 }
 
+function UsbPage({ state }: { state: AppStateData }) {
+  // Zeigt, was gui_server.py._usb_scan_loop() (alle 5s, nur solange kein
+  // Spiel laeuft) an automatisch gemounteten USB-Datentraegern mit einer
+  // APP.txt in deren Wurzelverzeichnis gefunden hat - reine Anzeige, kein
+  // eigenes ListRow/onActivate, da es hier nichts zu oeffnen gibt.
+  const devices = state.usb_devices || [];
+  if (!devices.length) {
+    return (
+      <PanelSection title="USB">
+        <PanelSectionRow>
+          <div style={{ fontSize: "13px", color: "#7686a0" }}>
+            Kein USB-Datentraeger mit APP.txt erkannt.
+          </div>
+        </PanelSectionRow>
+      </PanelSection>
+    );
+  }
+  return (
+    <PanelSection title="USB">
+      {devices.map((d) => (
+        <PanelSectionRow key={d.mount}>
+          <Field label={d.name}>{d.mount}</Field>
+        </PanelSectionRow>
+      ))}
+    </PanelSection>
+  );
+}
+
 function ToolsPage({ refresh }: { refresh: () => void }) {
   const [confirmArmed, setConfirmArmed] = useState(false);
   return (
@@ -773,6 +809,7 @@ function Content() {
           setPickerFor={setPickerForTagUid}
         />
       )}
+      {category === "usb" && <UsbPage state={state} />}
       {category === "tools" && <ToolsPage refresh={refresh} />}
       {category === "info" && <InfoPage state={state} />}
     </>

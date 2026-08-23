@@ -95,6 +95,21 @@ else
 fi
 
 echo
+echo "Richte USB-Automount fuer Datentraeger ein (benoetigt sudo)..."
+chmod +x "$SCRIPT_DIR/usb-automount.sh"
+if sed "s#@STEAMOS_DIR@#$SCRIPT_DIR#g; s#@STEAMOS_USER@#$USER#g; s#@STEAMOS_UID@#$(id -u)#g; s#@STEAMOS_GID@#$(id -g)#g" \
+        "$SCRIPT_DIR/61-usb-automount.rules" | sudo tee /etc/udev/rules.d/61-usb-automount.rules > /dev/null \
+    && sudo udevadm control --reload; then
+    echo "  eingerichtet - Sticks/externe Festplatten erscheinen kuenftig automatisch"
+    echo "  unter /run/media/$USER/<Geraetename>, auch im Game Mode."
+    # Bereits eingesteckte Datentraeger sofort erfassen, statt auf das
+    # naechste Ein-/Ausstecken warten zu muessen:
+    sudo udevadm trigger --action=add --subsystem-match=block || true
+else
+    echo "  Fehler bei der Einrichtung - bitte die obigen Schritte manuell pruefen."
+fi
+
+echo
 echo "Fertig. Status pruefen mit:"
 echo "  systemctl --user status steamos-pico-monitor.service"
 echo "  systemctl --user status steamos-gui.service"
@@ -113,3 +128,4 @@ echo "LilyGo-Statusdisplay und lokale USB-RGB-LEDs (OpenRGB) sind optional - lau
 if [ -n "$CONTROLLER_BUS" ]; then
     echo "Wake-on-USB-Status pruefen mit: cat /sys/bus/usb/devices/${CONTROLLER_BUS}/power/wakeup"
 fi
+echo "USB-Automount-Logs ansehen mit: journalctl -t usb-automount -f"

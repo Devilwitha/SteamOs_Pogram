@@ -35,6 +35,8 @@ import re
 import socketserver
 import sqlite3
 import sys
+import threading
+import time
 import urllib.parse
 import webbrowser
 from pathlib import Path
@@ -48,6 +50,7 @@ import audio_player  # noqa: E402
 import download_monitor  # noqa: E402
 import game_scanner  # noqa: E402
 import led_settings  # noqa: E402
+import pico_client  # noqa: E402
 import pico_link  # noqa: E402
 import video_player  # noqa: E402
 
@@ -551,6 +554,99 @@ def _render_audio_mode_panel():
     )
 
 
+# -- USB-Erkennung (APP.txt) -------------------------------------------
+# Zeigt in allen drei Oberflaechen (dashboard.html, native_console.py,
+# Decky-Plugin - alle drei lesen /api/state) automatisch einen neuen
+# "USB"-Punkt an, sobald ein per usb-automount.sh (siehe
+# ../61-usb-automount.rules) automatisch gemounteter Datentraeger eine
+# Datei APP.txt in seinem Wurzelverzeichnis hat. Laeuft als eigener
+# Hintergrund-Thread (siehe _usb_scan_loop()/main()), damit der
+# HTTP-Handler dafuer nicht bei jeder /api/state-Anfrage selbst das
+# Dateisystem durchsuchen muss.
+USB_MARKER_FILENAME = "APP.txt"
+USB_SCAN_INTERVAL_SECONDS = 5
+
+_usb_lock = threading.Lock()
+_usb_devices = []  # siehe _usb_scan_loop() - Liste von {"mount":..., "name":...}
+
+
+def _removable_mount_points():
+    """Alle aktuell per USB automatisch eingehaengten Verzeichnisse (siehe
+    ../usb-automount.sh) unter Linux - unter Windows (nur fuers lokale
+    Testen ohne SteamOS-Hardware, siehe README) alle
+    Wechseldatentraeger-Laufwerksbuchstaben, da es dort kein /run/media
+    gibt."""
+    if sys.platform == "win32":
+        import ctypes
+        import string
+        DRIVE_REMOVABLE = 2
+        return [
+            Path(f"{letter}:\\")
+            for letter in string.ascii_uppercase
+            if ctypes.windll.kernel32.GetDriveTypeW(f"{letter}:\\") == DRIVE_REMOVABLE
+        ]
+
+    media_root = Path("/run/media")
+    if not media_root.is_dir():
+        return []
+    mounts = []
+    for user_dir in media_root.iterdir():
+        if user_dir.is_dir():
+            mounts.extend(p for p in user_dir.iterdir() if p.is_dir())
+    return mounts
+
+
+def _scan_usb_markers():
+    """Prueft jeden aktuell gemounteten Wechseldatentraeger auf eine Datei
+    APP.txt in dessen Wurzelverzeichnis. Der Anzeigename ist die erste
+    (nicht-leere) Zeile von APP.txt, sonst der Ordnername des Mountpoints."""
+    found = []
+    for mount in _removable_mount_points():
+        marker = mount / USB_MARKER_FILENAME
+        if not marker.is_file():
+            continue
+        name = mount.name
+        try:
+            for line in marker.read_text(encoding="utf-8", errors="replace").splitlines():
+                if line.strip():
+                    name = line.strip()
+                    break
+        except OSError:
+            pass
+        found.append({"mount": str(mount), "name": name})
+    return found
+
+
+def _usb_scan_loop():
+    """Laeuft dauerhaft in einem eigenen Hintergrund-Thread (siehe main()):
+    alle USB_SCAN_INTERVAL_SECONDS (Standard 5s) wird zuerst geprueft, ob
+    gerade ueberhaupt kein Spiel laeuft - per pico_client._find_running_installed_game(),
+    demselben Prozess-Scan (Steams reaper-Prozess bzw. install_path-Abgleich),
+    den pico_client.py bereits fuer die LED-Farbe nutzt (siehe dort), hier
+    aber unabhaengig von dessen Prozess erneut ausgefuehrt, da gui_server.py
+    als eigener Dienst laeuft. Waehrend ein Spiel laeuft, wird das teurere
+    Durchsuchen von /run/media uebersprungen und die zuletzt erkannte Liste
+    verworfen, statt einen veralteten Stand weiter anzuzeigen - waehrend des
+    Spielens soll kein neuer Menuepunkt ablenken.
+    Absichtlich unabhaengig davon, ob Desktop- oder Game Mode aktiv ist
+    (nicht zuverlaessig von einem Hintergrunddienst aus feststellbar, siehe
+    steamOs/README.md) - "kein Spiel laeuft" ist die eigentlich gemeinte
+    Bedingung und deckt beide Faelle ab."""
+    global _usb_devices
+    while True:
+        try:
+            game_running = pico_client._find_running_installed_game(
+                pico_client._fetch_installed_games()
+            ) is not None
+            found = [] if game_running else _scan_usb_markers()
+        except Exception as e:
+            print(f"USB-Erkennung: Fehler beim Scannen: {e}", flush=True)
+            found = []
+        with _usb_lock:
+            _usb_devices = found
+        time.sleep(USB_SCAN_INTERVAL_SECONDS)
+
+
 def _download_status():
     """Aktueller Download-Fortschritt (siehe download_monitor.py) fuer den
     Fortschritts-Zeiger auf dem Farbverlauf-Balken in
@@ -752,10 +848,13 @@ def _state_payload():
     ]
     boot_sound_path = audio_config.get_boot_sound_path()
     video_path = audio_config.get_video_path()
+    with _usb_lock:
+        usb_devices = list(_usb_devices)
     return {
         "ok": True,
         "app_version": VERSION,
         "games": games_json,
+        "usb_devices": usb_devices,
         "tags": tags if tags is not None else [],
         "pico_reachable": tags is not None,
         "audio_mode": audio_config.get_mode(),
@@ -1414,6 +1513,9 @@ def main():
     config = pico_link.load_config()
     host = config.get("gui_bind") or HOST
     port = config.get("gui_port") or DEFAULT_PORT
+    # USB-Erkennung (APP.txt) - eigener Hintergrund-Thread, siehe
+    # _usb_scan_loop() oben, damit der HTTP-Server selbst nicht blockiert.
+    threading.Thread(target=_usb_scan_loop, name="usb-scan", daemon=True).start()
     with _ReusableTCPServer((host, port), Handler) as httpd:
         display_host = "127.0.0.1" if host == "0.0.0.0" else host
         url = f"http://{display_host}:{port}/"
