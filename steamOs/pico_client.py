@@ -668,11 +668,9 @@ def blink_leds(color, cycles=3, on_seconds=0.15, off_seconds=0.15):
     """Laesst Led_Pico/OpenRGB kurz zwischen der angegebenen Farbe und Aus
     hin- und herblinken - fuer das Sleep/Shutdown-Blinken (siehe
     _start_sleep_shutdown_listener()). Bewusst kurz gehalten (Standard
-    < 1s insgesamt): systemd-logind gibt Programmen nur eine begrenzte Zeit
-    (siehe logind.conf, i. d. R. wenige Sekunden), bevor es mit dem
-    Schlafen/Herunterfahren fortfaehrt, auch wenn noch reagiert wird -
-    dieser Aufruf nimmt bewusst keinen eigenen Inhibitor-Lock (siehe
-    Docstring dort), das Blinken muss also von selbst schnell genug sein.
+    < 1s insgesamt), auch wenn _start_sleep_shutdown_listener() dank
+    Inhibitor-Lock (siehe dort) eigentlich mehrere Sekunden Zeit haette -
+    das Blinken soll sich nicht traege anfuehlen.
     Ruft am Ende reset_led_cache() auf, damit die naechste normale
     update_led()-Runde (z. B. nach einem abgebrochenen Suspend, oder nach
     dem Aufwachen) die eigentliche Farbe zuverlaessig wiederherstellt."""
@@ -705,6 +703,21 @@ def _start_sleep_shutdown_listener():
     led_settings.json umschaltbar (siehe led_settings.is_enabled()/
     is_blink_on_sleep_enabled()).
 
+    Haelt dafuer durchgehend einen "delay"-Inhibitor-Lock
+    (org.freedesktop.login1.Manager.Inhibit("sleep:shutdown", ...)) -
+    ohne den signalisiert PrepareForSleep/-Shutdown zwar rechtzeitig, aber
+    logind wartet nicht darauf, dass ein Programm tatsaechlich reagiert
+    hat: das eigentliche Schlafen/Herunterfahren (und damit oft auch die
+    Stromversorgung von Led_Pico/USB-RGB) konnte in der Praxis schon
+    mitten in der ~1s-Blinksequenz einsetzen, sodass nichts sichtbar
+    blinkte, obwohl der Log-Eintrag "... steht bevor - LEDs blinken."
+    bereits geschrieben wurde. Mit dem Lock wartet logind bis zu
+    InhibitDelayMaxSec (logind.conf, Standard 5s) auf dessen Freigabe -
+    nach dem Blinken (bzw. sofort, falls das Feature/LED-Sync deaktiviert
+    ist) wird der Lock-Deskriptor geschlossen, was logind freigibt,
+    fortzufahren. Fuer die naechste Gelegenheit (naechster Suspend/
+    Shutdown) wird direkt danach automatisch ein neuer Lock geholt.
+
     Nutzt dbus-python + eine GLib-Ereignisschleife (beide auf SteamOS/
     Bazzite bereits systemweit vorhanden, siehe README) statt einer
     zusaetzlichen Abhaengigkeit. Faengt jeden Fehler beim Aufsetzen ab
@@ -720,21 +733,57 @@ def _start_sleep_shutdown_listener():
         print(f"Sleep/Shutdown-Blinken nicht verfuegbar (DBus/PyGObject fehlt: {e}) - wird uebersprungen.", flush=True)
         return
 
+    state = {"manager": None, "inhibit_fd": None}
+
+    def acquire_inhibit_lock():
+        if state["inhibit_fd"] is not None or state["manager"] is None:
+            return
+        try:
+            fd = state["manager"].Inhibit(
+                "sleep:shutdown",
+                "SteamOS Konsole",
+                "LEDs vor dem Schlafen/Herunterfahren kurz blinken lassen",
+                "delay",
+            )
+            state["inhibit_fd"] = fd.take()
+        except Exception as e:
+            print(f"Sleep/Shutdown-Blinken: Inhibitor-Lock nicht erhalten ({e}) - Blinken evtl. unzuverlaessig.", flush=True)
+
+    def release_inhibit_lock():
+        fd = state["inhibit_fd"]
+        state["inhibit_fd"] = None
+        if fd is not None:
+            try:
+                os.close(fd)
+            except OSError:
+                pass
+
     def on_prepare(start, anlass):
         if not start:
+            # Aufwachen aus dem Suspend bzw. abgebrochener Shutdown - fuer
+            # das naechste Mal wieder einen Lock bereithalten. Bei
+            # Shutdown kommt dieser Zweig i. d. R. nicht mehr zum Tragen,
+            # der Prozess wird vorher beendet - schadet hier aber nicht.
+            acquire_inhibit_lock()
             return
-        if not led_settings.is_enabled() or not led_settings.is_blink_on_sleep_enabled():
-            return
-        color = _last_led_color
-        if color in (None, _UNSET, _LED_DISABLED):
-            color = led_settings.get_idle_color()
-        print(f"{anlass} steht bevor - LEDs blinken.", flush=True)
-        blink_leds(color)
+        try:
+            if led_settings.is_enabled() and led_settings.is_blink_on_sleep_enabled():
+                color = _last_led_color
+                if color in (None, _UNSET, _LED_DISABLED):
+                    color = led_settings.get_idle_color()
+                print(f"{anlass} steht bevor - LEDs blinken.", flush=True)
+                blink_leds(color)
+        finally:
+            release_inhibit_lock()
 
     def run_loop():
         try:
             DBusGMainLoop(set_as_default=True)
             bus = dbus.SystemBus()
+            state["manager"] = dbus.Interface(
+                bus.get_object("org.freedesktop.login1", "/org/freedesktop/login1"),
+                "org.freedesktop.login1.Manager",
+            )
             bus.add_signal_receiver(
                 lambda start: on_prepare(bool(start), "Suspend"),
                 signal_name="PrepareForSleep",
@@ -745,6 +794,7 @@ def _start_sleep_shutdown_listener():
                 signal_name="PrepareForShutdown",
                 dbus_interface="org.freedesktop.login1.Manager",
             )
+            acquire_inhibit_lock()
             GLib.MainLoop().run()
         except Exception as e:
             print(f"Sleep/Shutdown-Blinken: Fehler beim Einrichten: {e}", flush=True)
