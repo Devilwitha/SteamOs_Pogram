@@ -232,6 +232,7 @@ const ICONS = {
   tags: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"><polygon points="3,12 11,4 20,4 20,13 12,21"/><circle cx="16" cy="8" r="1.3" fill="currentColor" stroke="none"/></svg>',
   tools: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><g transform="rotate(45 12 12)"><circle cx="7" cy="7" r="3.2"/><line x1="9.3" y1="9.3" x2="18" y2="18"/><rect x="16" y="16" width="5" height="3.2" rx="1"/></g></svg>',
   info: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><line x1="12" y1="11" x2="12" y2="16.5"/><circle cx="12" cy="7.5" r="1.1" fill="currentColor" stroke="none"/></svg>',
+  usb: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="7" y="3" width="10" height="7" rx="1.5"/><line x1="10" y1="3" x2="10" y2="6"/><line x1="14" y1="3" x2="14" y2="6"/><path d="M9 10v4a3 3 0 0 0 3 3 3 3 0 0 0 3-3v-4"/><line x1="12" y1="17" x2="12" y2="21"/></svg>',
 };
 
 const CATEGORIES = [
@@ -239,6 +240,7 @@ const CATEGORIES = [
   { id: 'sound', label: 'Sound' },
   { id: 'games', label: 'Spiele' },
   { id: 'tags', label: 'Tags' },
+  { id: 'usb', label: 'USB' },
   { id: 'tools', label: 'Werkzeuge' },
   { id: 'info', label: 'Info' },
 ];
@@ -501,6 +503,19 @@ function openGamePicker(tag) {
   openSubmenu('Verknüpfen: ' + shortUid(tag.uid), items);
 }
 
+function usbRows() {
+  // Zeigt, was der Hintergrund-Scan in gui_server.py (_usb_scan_loop(),
+  // alle 5s, nur solange kein Spiel laeuft) an automatisch gemounteten
+  // USB-Datentraegern mit einer APP.txt gefunden hat - siehe
+  // steamOs/README.md, Abschnitt "USB-Erkennung". 'stat'-Zeilentyp statt
+  // 'list-item', da es hier (bewusst) nichts anzuklicken gibt, nur eine
+  // Anzeige.
+  if (!state.usb_devices || !state.usb_devices.length) {
+    return [infoRow('Kein USB-Datentraeger mit APP.txt erkannt.')];
+  }
+  return state.usb_devices.map(d => statRow(d.name, 'erkannt · ' + d.mount));
+}
+
 function toolsRows() {
   return [{
     type: 'button',
@@ -534,6 +549,7 @@ const CATEGORY_ROWS = {
   sound: soundRows,
   games: gamesRows,
   tags: tagsRows,
+  usb: usbRows,
   tools: toolsRows,
   info: infoRows,
 };

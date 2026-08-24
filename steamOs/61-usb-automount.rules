@@ -1,0 +1,14 @@
+# USB-Automount fuer Datentraeger (Sticks/externe Festplatten) - siehe
+# steamOs/README.md, Abschnitt "USB-Automount". Reagiert auf Partitionen
+# *und* partitionslos formatierte Datentraeger mit erkanntem Dateisystem an
+# einem USB-Bus (ENV{ID_BUS}=="usb" schliesst das interne eMMC/NVMe/den
+# RFID-/Led_Pico bereits aus, die melden sich ohnehin nicht im
+# "block"-Subsystem) und ruft dafuer usb-automount.sh mit dem
+# Kernel-Geraetenamen (%k) auf. Laeuft komplett auf udev-/Kernel-Ebene,
+# unabhaengig von jeder grafischen Sitzung - funktioniert dadurch auch im
+# Game Mode. @STEAMOS_DIR@/@STEAMOS_USER@/@STEAMOS_UID@/@STEAMOS_GID@ werden
+# von install.sh per sed durch die tatsaechlichen Werte ersetzt.
+ACTION=="add", SUBSYSTEM=="block", ENV{DEVTYPE}=="partition", ENV{ID_BUS}=="usb", ENV{ID_FS_USAGE}=="filesystem", RUN+="@STEAMOS_DIR@/usb-automount.sh add %k @STEAMOS_USER@ @STEAMOS_UID@ @STEAMOS_GID@"
+ACTION=="add", SUBSYSTEM=="block", ENV{DEVTYPE}=="disk", ENV{ID_BUS}=="usb", ENV{ID_FS_USAGE}=="filesystem", RUN+="@STEAMOS_DIR@/usb-automount.sh add %k @STEAMOS_USER@ @STEAMOS_UID@ @STEAMOS_GID@"
+ACTION=="remove", SUBSYSTEM=="block", ENV{DEVTYPE}=="partition", ENV{ID_BUS}=="usb", RUN+="@STEAMOS_DIR@/usb-automount.sh remove %k @STEAMOS_USER@ @STEAMOS_UID@ @STEAMOS_GID@"
+ACTION=="remove", SUBSYSTEM=="block", ENV{DEVTYPE}=="disk", ENV{ID_BUS}=="usb", RUN+="@STEAMOS_DIR@/usb-automount.sh remove %k @STEAMOS_USER@ @STEAMOS_UID@ @STEAMOS_GID@"

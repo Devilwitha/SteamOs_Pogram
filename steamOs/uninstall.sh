@@ -27,4 +27,17 @@ if [ -f /etc/udev/rules.d/10-wakeup.rules ]; then
     fi
 fi
 
+# USB-Automount-udev-Regel (siehe install.sh) - system-weit, braucht sudo,
+# daher separat und mit eigener Fehlerbehandlung. Bereits gemountete
+# Datentraeger bleiben davon unberuehrt (liegen unter /run, das ohnehin
+# beim naechsten Neustart geleert wird).
+if [ -f /etc/udev/rules.d/61-usb-automount.rules ]; then
+    if sudo rm -f /etc/udev/rules.d/61-usb-automount.rules && sudo udevadm control --reload; then
+        echo "USB-Automount-udev-Regel entfernt."
+    else
+        echo "Hinweis: USB-Automount-udev-Regel konnte nicht entfernt werden. Manuell:"
+        echo "  sudo rm -f /etc/udev/rules.d/61-usb-automount.rules && sudo udevadm control --reload"
+    fi
+fi
+
 echo "Dienste entfernt."

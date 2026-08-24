@@ -291,6 +291,17 @@ die `‹`/`›`-Pfeile bei Farb-/Modus-Zeilen) funktionieren zusaetzlich -
 nuetzlich zum Testen ohne Controller, z. B. direkt per
 `python3 steamOs/gui/launch_dashboard.py` im Desktop-Modus.
 
+### Alternative: als Decky-Plugin im Quick-Access-Menu
+
+Statt eines eigenen Bibliothekseintrags lassen sich dieselben
+Einstellungen auch direkt im Quick-Access-Menu von Big Picture anzeigen
+(der "..."-Button, auch waehrend ein Spiel laeuft erreichbar) - siehe
+[`../decky-plugin/`](../decky-plugin/) fuer das dazugehoerige
+[Decky-Loader](https://decky.xyz/)-Plugin samt Bau-/Installationsanleitung.
+Spricht dieselbe `/api/*`-JSON-API von `gui_server.py` wie
+`native_console.py`/`dashboard.html` - keine der drei Oberflaechen
+schliesst die anderen aus, alle drei koennen parallel genutzt werden.
+
 ### Farbe pro Spiel (fuer den Led_Pico)
 
 In der Spiele-Tabelle gibt es eine Spalte "Farbe" mit einem Farbfeld je
@@ -567,6 +578,106 @@ angeschlossenem Controller erneut ausfuehren, um es nachzuholen. Status
 pruefen: `cat /sys/bus/usb/devices/usbN/power/wakeup` (sollte `enabled`
 zeigen, `usbN` durch die tatsaechliche Bus-Nummer ersetzen). `uninstall.sh`
 entfernt die Regel wieder.
+
+## USB-Automount (Datentraeger, auch im Game Mode)
+
+`install.sh` richtet zusaetzlich eine udev-Regel (`61-usb-automount.rules`)
+ein, die USB-Sticks und externe Festplatten automatisch ein- und wieder
+aushaengt, sobald sie angeschlossen bzw. entfernt werden - unabhaengig vom
+Wake-on-USB-Controller weiter oben (das betrifft nur das Aufwecken aus dem
+Standby, nicht das Mounten von Speichergeraeten).
+
+**Warum eine eigene udev-Regel statt udisks2/`udiskie` o.ae.:** Die
+ueblichen Automount-Helfer haengen an der grafischen Desktop-Sitzung (bzw.
+brauchen eine von `logind` als "aktiv" erkannte Sitzung fuer die
+polkit-Freigabe von udisks2) - genau die laeuft im **Game Mode** nicht.
+Die udev-Regel wirkt dagegen komplett auf Kernel-/root-Ebene (analog zum
+Wake-on-USB-Mechanismus oben) und ist deshalb von jeder grafischen Sitzung
+unabhaengig: Sticks werden identisch im Desktop- wie im Game Mode gemountet.
+
+**Ablauf:**
+
+1. Beim Einstecken (`ACTION=="add"`, `ENV{ID_BUS}=="usb"`, mit erkanntem
+   Dateisystem - sowohl fuer normal partitionierte als auch fuer
+   partitionslos formatierte Sticks) ruft udev
+   [`usb-automount.sh`](usb-automount.sh) mit dem Kernel-Geraetenamen auf
+   (z. B. `sda1`).
+2. Das Skript ermittelt den Dateisystemtyp per `blkid` und mountet unter
+   `/run/media/<Benutzer>/<Geraetename>` (derselbe Basispfad wie bei
+   udisks2/GNOME, daher auch im Desktop-Modus von Dateimanagern erkannt) -
+   mit `uid`/`gid` des Installations-Benutzers bei `vfat`/`exfat`/`ntfs`
+   (ueber den im Kernel eingebauten `ntfs3`-Treiber, kein zusaetzliches
+   Paket noetig), sonst mit den dateisystemeigenen Rechten (`ext4`, `btrfs`,
+   `xfs`, `f2fs`, ...).
+3. Beim Entfernen (`ACTION=="remove"`) wird derselbe Mountpoint wieder
+   ausgehaengt (bei bereits physisch getrenntem Geraet notfalls per
+   `umount -l`) und das Verzeichnis geloescht.
+
+Da `/run` ein tmpfs ist, sind nach einem Neustart ohnehin keine
+Mountpoints mehr uebrig - die Regel legt sie beim naechsten Einstecken
+einfach neu an.
+
+**Einrichtung:** passiert automatisch als Teil von `./install.sh` (siehe
+[Installation](#installation) oben) - schreibt die Regel nach
+`/etc/udev/rules.d/61-usb-automount.rules` (braucht `sudo`, wie beim
+Wake-on-USB-Abschnitt) und macht `usb-automount.sh` ausfuehrbar. Bereits
+beim Einrichten eingesteckte Datentraeger werden zusaetzlich sofort per
+`udevadm trigger` erfasst, statt erst auf das naechste Aus-/Einstecken zu
+warten. `./uninstall.sh` entfernt die Regel wieder (bereits gemountete
+Sticks bleiben davon unberuehrt).
+
+Status/Logs pruefen:
+
+```bash
+journalctl -t usb-automount -f
+mount | grep /run/media
+```
+
+**Bekannte Einschraenkung:** Der Mountpoint-Name ist bewusst der
+Kernel-Geraetename (`sda1`, ...) statt des Datentraeger-Labels - robuster
+gegenueber Sonderzeichen/Duplikaten, aber weniger sprechend als z. B. bei
+udisks2. Ausserdem ist ein hartes Abziehen ohne vorheriges Aushaengen (kein
+"sicher entfernen"-Knopf vorhanden) bei nicht-journalisierenden bzw. gerade
+beschriebenen Dateisystemen mit demselben Datenverlustrisiko behaftet wie
+bei jeder anderen Automount-Loesung auch.
+
+## USB-Erkennung (`APP.txt`)
+
+Zusaetzlich zum reinen Mounten (siehe oben) erkennt `gui_server.py` von
+sich aus, wenn auf einem automatisch gemounteten USB-Datentraeger eine
+Datei `APP.txt` in dessen Wurzelverzeichnis liegt - und zeigt dafuer in
+**allen drei Oberflaechen gleichzeitig** (`dashboard.html`/Web,
+`native_console.py`/GUI, [Decky-Plugin](../decky-plugin/)) einen neuen
+Menuepunkt **"USB"** an, da alle drei denselben `/api/state`-Endpunkt
+lesen (siehe [Verhaeltnis zu den anderen beiden
+Oberflaechen](#verhaeltnis-zu-den-anderen-beiden-oberflaechen)).
+
+**Ablauf:**
+
+1. Ein eigener Hintergrund-Thread in `gui_server.py`
+   (`_usb_scan_loop()`) prueft alle 5 Sekunden, ob **gerade kein Spiel
+   laeuft** - ueber denselben Prozess-Scan
+   (`pico_client._find_running_installed_game()`), den `pico_client.py`
+   bereits fuer die LED-Farbe nutzt (siehe [Automatischer Spielstart per
+   RFID-Tag](#automatischer-spielstart-per-rfid-tag)). Laeuft ein Spiel,
+   wird das Scannen ausgesetzt und eine zuvor erkannte Anzeige
+   zurueckgenommen, statt einen veralteten Stand weiter zu zeigen -
+   waehrend des Spielens soll kein neuer Menuepunkt ablenken. Bewusst
+   unabhaengig davon, ob Desktop- oder Game Mode aktiv ist (fuer einen
+   Hintergrunddienst nicht zuverlaessig feststellbar) - "kein Spiel
+   laeuft" deckt beide Faelle ab.
+2. Laeuft kein Spiel, wird jedes aktuell unter `/run/media/<Benutzer>/`
+   gemountete Verzeichnis (siehe [USB-Automount](#usb-automount-datentraeger-auch-im-game-mode)
+   oben) auf eine Datei `APP.txt` in seiner Wurzel geprueft.
+3. Gefunden wird sie automatisch erkannt und mit ihrer ersten
+   (nicht-leeren) Textzeile als Anzeigename im neuen "USB"-Punkt
+   aufgelistet (Fallback: Ordnername des Mountpoints, falls `APP.txt`
+   leer ist).
+
+Rein anzeigend - es wird (noch) nichts automatisch gestartet oder
+verknuepft, anders als beim RFID-Tag-Ablauf. Kein zusaetzlicher Dienst
+noetig: laeuft als Teil von `steamos-gui.service`, das ohnehin schon
+dauerhaft laeuft (siehe [Installation](#installation)).
 
 ## Konfiguration (`config.json`)
 
